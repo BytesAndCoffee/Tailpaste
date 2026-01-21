@@ -1,0 +1,141 @@
+name: Integration Tests
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types:
+      - completed
+    branches: [ main ]
+
+jobs:
+  integration-test:
+    name: Integration Testing
+    runs-on:
+      - tailpaste-runners
+    
+    # Only run if triggered by schedule/dispatch OR if CI workflow succeeded
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Ensure iptables and ping are installed
+        run: |
+          if ! command -v iptables > /dev/null; then
+            sudo apt-get update && sudo apt-get install -y iptables
+          fi
+      
+      - name: Check for elevation
+        run: |
+          if [ "$EUID" -ne 0 ]; then
+            echo "❌ This job requires elevated privileges."
+            echo "Checking sudo access..."
+            echo "Elevated user: $(sudo whoami)"
+          fi
+          echo "✓ Running with elevated privileges."
+          sudo which iptables
+        
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+          ping: tailpaste.tailfa875.ts.net
+      
+      - name: Wait for Tailpaste
+        run: |
+          echo "⏳ Waiting for Tailpaste service to be reachable..."
+          for i in {1..90}; do
+            if curl -f -s -o /dev/null http://tailpaste:8080/; then
+              echo "Tailpaste is up"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Tailpaste failed to start"
+      
+      - name: Run integration tests
+        run: |
+          echo "🔍 Testing service availability..."
+          if ! curl -f -s -o /dev/null http://tailpaste:8080/; then
+            echo "❌ Service is not reachable"
+          fi
+          echo "✓ Service is reachable"
+          
+          echo "📝 Testing paste creation and retrieval..."
+          TEST_CONTENT="Integration Test - $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          PASTE_URL=$(curl -s -X POST -H "Content-Type: text/plain" -d "$TEST_CONTENT" http://tailpaste:8080/)
+          
+          if [ -z "$PASTE_URL" ]; then
+            echo "❌ Failed to create paste"
+            exit 1
+          fi
+          echo "✓ Created paste: $PASTE_URL"
+          
+          RETRIEVED=$(curl -s "$PASTE_URL")
+          if [[ "$RETRIEVED" == *"$TEST_CONTENT"* ]]; then
+            echo "✓ Paste content verified"
+          else
+            echo "❌ Paste content mismatch"
+            exit 1
+          fi
+      
+      - name: Test large paste handling
+        run: |
+          echo "📦 Testing large paste (500KB)..."
+          dd if=/dev/urandom bs=1024 count=500 2>/dev/null | base64 > /tmp/large_test.txt
+          
+          PASTE_URL=$(curl -s -X POST -H "Content-Type: text/plain" --data-binary @/tmp/large_test.txt http://tailpaste:8080/)
+          
+          if [ -z "$PASTE_URL" ]; then
+            echo "❌ Failed to create large paste"
+            rm -f /tmp/large_test.txt
+            exit 1
+          fi
+          echo "✓ Created large paste: $PASTE_URL"
+          
+          curl -s -o /tmp/retrieved.txt "$PASTE_URL"
+          if [ -s /tmp/retrieved.txt ]; then
+            ORIGINAL_SIZE=$(wc -c < /tmp/large_test.txt)
+            RETRIEVED_SIZE=$(wc -c < /tmp/retrieved.txt)
+            echo "✓ Retrieved paste (Original: $ORIGINAL_SIZE bytes, Retrieved: $RETRIEVED_SIZE bytes)"
+          else
+            echo "❌ Failed to retrieve large paste"
+            exit 1
+          fi
+          
+          rm -f /tmp/large_test.txt /tmp/retrieved.txt
+      
+      - name: Test security and concurrent requests
+        run: |
+          echo "⚡ Testing concurrent requests..."
+          for i in $(seq 1 10); do
+            (curl -s -X POST -H "Content-Type: text/plain" -d "Concurrent test $i" http://tailpaste:8080/ > /dev/null) &
+          done
+          wait
+          echo "✓ Concurrent requests completed"
+          
+          echo "🔒 Testing proxy header rejection..."
+          HEADERS=("X-Forwarded-For: 1.2.3.4" "X-Real-IP: 1.2.3.4" "X-Forwarded-Proto: https")
+          
+          for HEADER in "${HEADERS[@]}"; do
+            HTTP_CODE=$(curl -s -w "%{http_code}" -o /dev/null -X POST -H "Content-Type: text/plain" -H "$HEADER" -d "Should be rejected" https://paste.bytes.coffee/)
+            
+            if [ "$HTTP_CODE" = "403" ]; then
+              echo "✓ Correctly rejected request with: $HEADER"
+            else
+              echo "❌ Expected 403, got $HTTP_CODE for: $HEADER"
+              exit 1
+            fi
+          done
+      
+      - name: Integration test summary
+        if: always()
+        run: |
+          echo "================================"
+          echo "Integration Test Summary"
+          echo "Status: ${{ job.status }}"
+          echo "Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "================================"

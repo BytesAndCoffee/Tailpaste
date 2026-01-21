@@ -1,0 +1,61 @@
+# Trivy Ignore File
+# Exclude directories and files to reduce scan time and false positives
+
+# Version control
+.git/
+.github/
+
+# Python cache and build artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Testing and coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Documentation
+docs/
+*.md
+
+# CI/CD
+ci/
+
+# Storage directory (user data)
+storage/
+
+# Generated reports
+*.json
+*.xml
+*.txt
+*.html
+
+# Large dependencies (scan via dependency check instead)
+node_modules/

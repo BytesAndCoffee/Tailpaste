@@ -1,0 +1,343 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., v1.0.0)'
+        required: true
+        type: string
+
+jobs:
+  validate-release:
+    name: Validate Release
+    runs-on:
+      - tailpaste-runners
+    
+    outputs:
+      version: ${{ steps.get-version.outputs.version }}
+      version_tag: ${{ steps.get-version.outputs.version_tag }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Get version
+        id: get-version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${{ github.ref_name }}"
+          fi
+          
+          echo "version=${VERSION#v}" >> $GITHUB_OUTPUT
+          echo "version_tag=$VERSION" >> $GITHUB_OUTPUT
+          echo "📌 Release version: $VERSION"
+      
+      - name: Validate version format
+        run: |
+          VERSION="${{ steps.get-version.outputs.version }}"
+          if ! echo "$VERSION" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "❌ Invalid version format: $VERSION"
+            echo "Expected format: X.Y.Z (e.g., 1.0.0)"
+            exit 1
+          fi
+          echo "✓ Version format is valid"
+      
+      - name: Check if tag exists
+        run: |
+          VERSION_TAG="${{ steps.get-version.outputs.version_tag }}"
+          if git rev-parse "$VERSION_TAG" >/dev/null 2>&1; then
+            echo "✓ Tag $VERSION_TAG exists"
+          else
+            echo "⚠️  Tag $VERSION_TAG does not exist yet"
+          fi
+
+  security-scan:
+    name: Security Scan for Release
+    needs: validate-release
+    runs-on:
+      - tailpaste-runners
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Run security scans
+        run: |
+          pip install safety bandit
+          safety check --json
+          bandit -r src/ -ll
+      
+      - name: Generate security summary
+        run: |
+          echo "## Security Scan Passed" >> $GITHUB_STEP_SUMMARY
+          echo "✅ No critical vulnerabilities found" >> $GITHUB_STEP_SUMMARY
+  
+  build-and-test:
+    name: Build and Test Release
+    needs: [validate-release, security-scan]  # Wait for both validation and security scan
+    runs-on:
+      - tailpaste-runners
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Set up Docker Compose
+        uses: docker/setup-compose-action@v1
+        with:
+          version: latest
+      
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+          ping: docker.tailfa875.ts.net
+      
+      - name: Set up Docker context
+        run: |
+          docker context create remote-build --docker "host=tcp://docker:2376" || true
+          docker context use remote-build
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest-cov
+      
+      - name: Run full test suite
+        run: |
+          echo "🧪 Running complete test suite..."
+          pytest --cov=src tests/ --cov-report=xml --cov-report=term-missing
+          coverage report --fail-under=70
+      
+      - name: Build Docker image
+        env:
+          TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+        run: |
+          echo "🐳 Building release Docker image..."
+          docker compose -f docker-compose.test.yml build
+          
+          # Tag with version
+          docker tag tailpaste-app:testing tailpaste-app:${{ needs.validate-release.outputs.version }}
+          
+          echo "✓ Docker image built and tagged"
+      
+      - name: Cleanup testing Docker resources
+        if: always()
+        run: |
+          echo "🧹 Cleaning up testing resources..."
+          # Remove testing containers
+          docker ps -a --filter "label=environment=testing" --filter "label=managed-by=ci" -q | xargs -r docker rm -f || true
+          # Remove testing images (but preserve the version-tagged one)
+          docker images --filter "reference=tailpaste-app:testing" -q | xargs -r docker rmi -f || true
+          # Remove testing volumes
+          docker volume ls --filter "label=environment=testing" --filter "label=managed-by=ci" -q | xargs -r docker volume rm || true
+          echo "✅ Cleanup complete"
+
+  create-release-artifacts:
+    name: Create Release Artifacts
+    needs: [validate-release, build-and-test]
+    runs-on:
+      - tailpaste-runners
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Generate changelog
+        run: |
+          echo "📝 Generating changelog..."
+          
+          # Get previous tag
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          CURRENT_TAG="${{ needs.validate-release.outputs.version_tag }}"
+          
+          echo "# Release $CURRENT_TAG" > CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          echo "**Release Date:** $(date -u +%Y-%m-%d)" >> CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          
+          if [ -n "$PREV_TAG" ]; then
+            echo "## Changes since $PREV_TAG" >> CHANGELOG.md
+            echo "" >> CHANGELOG.md
+            
+            # Get commits
+            git log ${PREV_TAG}..HEAD --pretty=format:"- %s (%h)" >> CHANGELOG.md
+          else
+            echo "## Initial Release" >> CHANGELOG.md
+            echo "" >> CHANGELOG.md
+            git log --pretty=format:"- %s (%h)" >> CHANGELOG.md
+          fi
+          
+          echo "" >> CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          echo "## Contributors" >> CHANGELOG.md
+          git log ${PREV_TAG}..HEAD --format='%aN' | sort -u | sed 's/^/- /' >> CHANGELOG.md || echo "- $(git config user.name)" >> CHANGELOG.md
+          
+          echo "✓ Changelog generated"
+          cat CHANGELOG.md
+      
+      - name: Create distribution package
+        run: |
+          echo "📦 Creating distribution package..."
+          
+          VERSION="${{ needs.validate-release.outputs.version }}"
+          ARCHIVE_NAME="tailpaste-${VERSION}.tar.gz"
+          
+          # Create clean copy without git/cache files
+          mkdir -p dist
+          tar --exclude='.git' \
+              --exclude='__pycache__' \
+              --exclude='.pytest_cache' \
+              --exclude='htmlcov' \
+              --exclude='*.pyc' \
+              --exclude='.DS_Store' \
+              --exclude='storage' \
+              --exclude='dist' \
+              -czf "dist/${ARCHIVE_NAME}" .
+          
+          cd dist
+          sha256sum "${ARCHIVE_NAME}" > "${ARCHIVE_NAME}.sha256"
+          
+          echo "✓ Distribution package created"
+          ls -lh
+      
+      - name: Generate installation script
+        run: |
+          cat > dist/install.sh << 'EOF'
+            #!/bin/bash
+            set -e
+
+            echo "🚀 Tailpaste Installation Script"
+            echo "================================"
+            echo ""
+
+            # Check prerequisites
+            if ! command -v docker &> /dev/null; then
+                echo "❌ Docker is required but not installed"
+                exit 1
+            fi
+
+            if ! command -v docker-compose &> /dev/null && ! docker compose version &> /dev/null; then
+                echo "❌ Docker Compose is required but not installed"
+                exit 1
+            fi
+
+            # Download and extract
+            VERSION="${{ needs.validate-release.outputs.version }}"
+            ARCHIVE_NAME="tailpaste-${VERSION}.tar.gz"
+            INSTALL_DIR="${HOME}/tailpaste"
+
+            echo "📥 Installing Tailpaste v${VERSION}..."
+
+            mkdir -p "${INSTALL_DIR}"
+            cd "${INSTALL_DIR}"
+
+            if [ ! -f "${ARCHIVE_NAME}" ]; then
+                echo "⚠️  Please download ${ARCHIVE_NAME} first"
+                exit 1
+            fi
+
+            echo "📦 Extracting archive..."
+            tar -xzf "${ARCHIVE_NAME}"
+
+            echo "✅ Installation complete!"
+            echo ""
+            echo "Next steps:"
+            echo "1. Set your TAILSCALE_AUTHKEY in .env file"
+            echo "2. Run: docker compose up -d"
+            echo ""
+            echo "For more information, see README.md"
+            EOF
+          
+          chmod +x dist/install.sh
+          echo "✓ Installation script created"
+      
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts-${{ needs.validate-release.outputs.version }}
+          path: |
+            dist/
+            CHANGELOG.md
+          retention-days: 90
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: [validate-release, create-release-artifacts]
+    runs-on:
+      - tailpaste-runners
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-artifacts-${{ needs.validate-release.outputs.version }}
+      
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ needs.validate-release.outputs.version_tag }}
+          name: Release ${{ needs.validate-release.outputs.version_tag }}
+          body_path: CHANGELOG.md
+          draft: false
+          prerelease: false
+          files: |
+            dist/*.tar.gz
+            dist/*.sha256
+            dist/install.sh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Generate release summary
+        run: |
+          echo "## 🎉 Release Published" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ needs.validate-release.outputs.version_tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** ✅ Success" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "- Distribution archive" >> $GITHUB_STEP_SUMMARY
+          echo "- SHA256 checksum" >> $GITHUB_STEP_SUMMARY
+          echo "- Installation script" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Links" >> $GITHUB_STEP_SUMMARY
+          echo "- [Release Page](https://github.com/${{ github.repository }}/releases/tag/${{ needs.validate-release.outputs.version_tag }})" >> $GITHUB_STEP_SUMMARY
+
+  deploy-release:
+    name: Deploy Release to Production
+    needs: [validate-release, publish-release]
+    uses: ./.github/workflows/deploy.yml
+    with:
+      version: ${{ needs.validate-release.outputs.version_tag }}
+    secrets: inherit

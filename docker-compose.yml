@@ -1,0 +1,45 @@
+# docker-compose.yml
+services:
+  tailpaste:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      labels:
+        - "environment=production"
+        - "managed-by=manual"
+    image: tailpaste-app:production
+    container_name: tailpaste
+    labels:
+      - "environment=production"
+      - "managed-by=manual"
+    # Required for Tailscale kernel networking
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    # Enable privileged mode for kernel networking
+    privileged: true
+    volumes:
+      # Persistent storage for SQLite database
+      - ./storage:/data
+      # Persistent storage for Tailscale state
+      - tailscale-state:/var/lib/tailscale
+      # Optional: Mount custom configuration file (uncomment if needed)
+      # - ./config.toml:/app/config.toml:ro
+    environment:
+      - STORAGE_PATH=/data
+      - LISTEN_PORT=8080
+      # REQUIRED: Set your Tailscale ephemeral auth key
+      - TAILSCALE_AUTHKEY=${TAILSCALE_AUTHKEY}
+      # Optional: Set custom hostname for the container
+      - TAILSCALE_HOSTNAME=${TAILSCALE_HOSTNAME:-tailpaste}
+      # Optional: Set custom domain for paste URLs
+      - CUSTOM_DOMAIN=${CUSTOM_DOMAIN}
+    restart: unless-stopped
+
+volumes:
+  tailscale-state:
+    labels:
+      - "environment=production"
+      - "managed-by=manual"

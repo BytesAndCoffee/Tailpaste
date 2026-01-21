@@ -1,0 +1,45 @@
+# Git
+.git/
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+venv/
+env/
+ENV/
+*.egg-info/
+.pytest_cache/
+.hypothesis/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Storage (don't copy into image)
+storage/*.db
+storage/*.txt
+storage/*.json
+
+# Config (use environment variables instead)
+.env
+config.toml
+
+# Documentation
+README.md
+LICENSE
+
+# Development
+.kiro/
+tests/
+pytest.ini
+
+# Docker
+docker-compose.yml

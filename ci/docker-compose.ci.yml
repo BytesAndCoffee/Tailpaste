@@ -1,0 +1,33 @@
+# docker-compose.ci.yml
+
+services:
+  tailpaste:
+    build:
+      context: ..
+      dockerfile: ci/Dockerfile.ci
+    container_name: tailpaste-ci
+
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+
+    devices:
+      - /dev/net/tun:/dev/net/tun
+
+    volumes:
+      - ../storage:/data
+      - tailscale-state:/var/lib/tailscale
+
+    environment:
+      - STORAGE_PATH=/data
+      - LISTEN_PORT=8080
+      - TAILSCALE_AUTHKEY=${TAILSCALE_AUTHKEY}
+      - TAILSCALE_HOSTNAME=${TAILSCALE_HOSTNAME:-tailpaste-ci}
+      - CUSTOM_DOMAIN=${CUSTOM_DOMAIN}
+
+    ports:
+      - "8080:8080"
+
+volumes:
+  tailscale-state:

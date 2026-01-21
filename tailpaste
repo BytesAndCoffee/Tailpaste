@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+UPLOAD_URL="http://tailpaste:8080"
+
+usage() {
+  echo "Usage: tailpaste [file]"
+  exit 1
+}
+
+if [[ $# -gt 1 ]]; then
+  usage
+fi
+
+read_clipboard() {
+  if command -v wl-paste >/dev/null 2>&1; then
+    wl-paste --no-newline
+  elif command -v xclip >/dev/null 2>&1; then
+    xclip -selection clipboard -o
+  elif command -v pbpaste >/dev/null 2>&1; then
+    pbpaste
+  else
+    echo "No clipboard utility found" >&2
+    exit 1
+  fi
+}
+
+upload() {
+  curl -fsS --data-binary @- "$UPLOAD_URL"
+}
+
+# Case 1: file argument
+if [[ $# -eq 1 ]]; then
+  upload < "$1"
+
+# Case 2: piped stdin
+elif [[ ! -t 0 ]]; then
+  upload
+
+# Case 3: clipboard fallback
+else
+  read_clipboard | upload
+fi

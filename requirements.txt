@@ -1,0 +1,8 @@
+flask==3.0.0
+requests==2.31.0
+urllib3<2
+requests-unixsocket==0.3.0
+pytest==7.4.3
+hypothesis==6.92.1
+tomli==2.0.1; python_version < '3.11'
+types-requests

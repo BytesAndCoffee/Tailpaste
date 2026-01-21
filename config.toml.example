@@ -1,0 +1,96 @@
+# tailpaste Configuration Example
+# 
+# This file demonstrates all available configuration options.
+# Copy this file to config.toml and customize as needed.
+#
+# Configuration priority (highest to lowest):
+# 1. Environment variables (e.g., CUSTOM_DOMAIN, STORAGE_PATH)
+# 2. config.toml file
+# 3. Default values
+
+# ============================================================================
+# Custom Domain Configuration (Optional)
+# ============================================================================
+# 
+# Specify a custom domain for paste URLs. When set, the service will generate
+# paste URLs using this domain instead of the default Tailscale hostname.
+#
+# Requirements:
+# - DNS CNAME record pointing to your Tailscale hostname
+# - Tailscale Funnel/Serve automatically provisions TLS certificates
+#
+# Format: Domain name only (no protocol, port, or path)
+# Valid:   "paste.example.com"
+# Invalid: "https://paste.example.com" (includes protocol)
+# Invalid: "paste.example.com:443" (includes port)
+#
+# Example:
+# custom_domain = "paste.example.com"
+#
+# Environment variable: CUSTOM_DOMAIN
+
+# custom_domain = "paste.example.com"
+
+# ============================================================================
+# Storage Configuration (Required)
+# ============================================================================
+#
+# Path to the SQLite database file for storing pastes.
+# The directory must exist and be writable by the service.
+#
+# Default: "./storage/pastes.db"
+# Environment variable: STORAGE_PATH
+
+storage_path = "./storage/pastes.db"
+
+# ============================================================================
+# HTTP Server Configuration
+# ============================================================================
+#
+# Port for the HTTP server to listen on.
+#
+# Default: 8080
+# Environment variable: LISTEN_PORT
+
+listen_port = 8080
+
+# ============================================================================
+# Tailscale LocalAPI Configuration (Auto-detected)
+# ============================================================================
+#
+# Path to the Tailscale LocalAPI socket for authentication.
+# The service auto-detects the correct socket path.
+# Only override if you have a non-standard Tailscale installation.
+#
+# Platform-specific defaults:
+# - Linux/Unix:    /var/run/tailscale/tailscaled.sock
+# - Windows/macOS: localhost:41112
+#
+# Environment variable: TAILSCALE_SOCKET
+
+# tailscale_socket = "/var/run/tailscale/tailscaled.sock"
+
+# ============================================================================
+# Proxy Trust Configuration (Security Critical)
+# ============================================================================
+#
+# Whether to trust requests from localhost as pre-authenticated.
+# 
+# SECURITY WARNING: Only enable this when running behind Tailscale serve/funnel
+# or another trusted proxy that handles authentication. If enabled incorrectly,
+# this creates a security vulnerability allowing unauthenticated paste uploads.
+#
+# When to enable (trust_proxy = true):
+# - Running behind Tailscale serve with authentication
+# - Behind nginx/reverse proxy with proper Tailscale auth headers
+# - In containerized environments with trusted proxy setup
+#
+# When to disable (trust_proxy = false, DEFAULT):
+# - Direct exposure to public internet
+# - Unsure about proxy authentication setup
+# - Development/testing environments
+#
+# Default: false
+# Environment variable: TRUST_PROXY
+
+trust_proxy = false

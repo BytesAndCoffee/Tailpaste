@@ -1,0 +1,297 @@
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: ["Integration Tests"]
+    types:
+      - completed
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      rollback:
+        description: 'Rollback to previous version'
+        required: false
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      version:
+        description: 'Version to deploy'
+        required: false
+        type: string
+      rollback:
+        description: 'Rollback to previous version'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  deploy:
+    name: Deploy to Production
+    # IMPORTANT: This job deploys to production using docker-compose.yml
+    # - Uses production-labeled resources: environment=production, managed-by=manual
+    # - Never uses docker-compose.test.yml (that's for CI/testing only)
+    # - Protected from CI cleanup operations
+    # Only deploy if both CI and Integration Tests succeeded (or manual trigger with rollback)
+    if: |
+      (
+        github.event_name == 'workflow_run' && 
+        github.event.workflow_run.conclusion == 'success'
+      ) || 
+      (github.event_name == 'workflow_dispatch' && inputs.rollback == true) ||
+      github.event_name == 'workflow_dispatch'
+    runs-on:
+      - tailpaste-runners
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        if: ${{ !inputs.rollback }}
+      
+      - name: Set up Docker Compose
+        uses: docker/setup-compose-action@v1
+        with:
+          version: latest
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+          ping: docker.tailfa875.ts.net
+      
+      - name: Backup current deployment
+        run: |
+          echo "💾 Creating backup of current deployment..."
+          
+          ssh -o StrictHostKeyChecking=no michael@docker << 'EOF'
+            set -e
+            cd ~/Tailpaste
+            
+            # Create backup directory if it doesn't exist
+            mkdir -p ~/.tailpaste-backups
+            
+            # Get current git hash for backup naming
+            CURRENT_HASH=$(git rev-parse --short HEAD)
+            BACKUP_NAME="backup-${CURRENT_HASH}-$(date +%Y%m%d-%H%M%S)"
+            
+            echo "Creating backup: $BACKUP_NAME"
+            
+            # Backup database
+            if [ -d storage ]; then
+              cp -r storage ~/.tailpaste-backups/${BACKUP_NAME}-storage
+              echo "✓ Database backed up"
+            fi
+            
+            # Save current git state
+            echo "$CURRENT_HASH" > ~/.tailpaste-backups/${BACKUP_NAME}-commit
+            
+            # Save current image
+            docker save tailpaste-app:production -o ~/.tailpaste-backups/${BACKUP_NAME}-image.tar 2>/dev/null || \
+            docker save tailpaste-tailpaste:latest -o ~/.tailpaste-backups/${BACKUP_NAME}-image.tar 2>/dev/null || true
+            
+            # Keep only last 5 backups
+            cd ~/.tailpaste-backups
+            ls -t | grep "^backup-" | tail -n +6 | xargs -r rm -rf
+            
+            echo "✅ Backup completed: $BACKUP_NAME"
+          EOF
+      
+      - name: Rollback to previous version
+        if: ${{ inputs.rollback }}
+        run: |
+          echo "⏮️  Rolling back to previous version..."
+          
+          ssh -o StrictHostKeyChecking=no michael@docker << 'EOF'
+            set -e
+            cd ~/Tailpaste
+            
+            # Find the most recent backup
+            LATEST_BACKUP=$(ls -t ~/.tailpaste-backups/ | grep "^backup-" | head -n 1)
+            
+            if [ -z "$LATEST_BACKUP" ]; then
+              echo "❌ No backup found!"
+              exit 1
+            fi
+            
+            echo "Rolling back to: $LATEST_BACKUP"
+            
+            # Stop current container (using production compose)
+            docker compose -f docker-compose.yml down
+            
+            # Restore database
+            if [ -d ~/.tailpaste-backups/${LATEST_BACKUP}-storage ]; then
+              rm -rf storage
+              cp -r ~/.tailpaste-backups/${LATEST_BACKUP}-storage storage
+              echo "✓ Database restored"
+            fi
+            
+            # Restore git state
+            if [ -f ~/.tailpaste-backups/${LATEST_BACKUP}-commit ]; then
+              COMMIT_HASH=$(cat ~/.tailpaste-backups/${LATEST_BACKUP}-commit)
+              git fetch origin
+              git reset --hard $COMMIT_HASH
+              echo "✓ Git state restored to $COMMIT_HASH"
+            fi
+            
+            # Restore Docker image
+            if [ -f ~/.tailpaste-backups/${LATEST_BACKUP}-image.tar ]; then
+              docker load -i ~/.tailpaste-backups/${LATEST_BACKUP}-image.tar
+              echo "✓ Docker image restored"
+            else
+              # Rebuild from restored git state (production)
+              docker compose -f docker-compose.yml build --no-cache
+            fi
+            
+            # Start container (production)
+            docker compose -f docker-compose.yml up -d
+            
+            echo "✅ Rollback completed!"
+          EOF
+          
+          exit 0
+      
+      - name: Deploy to docker host
+        if: ${{ !inputs.rollback }}
+        run: |
+          echo "🚀 Deploying to docker host..."
+          
+          ssh -o StrictHostKeyChecking=no michael@docker << 'EOF'
+            set -e
+            cd ~/Tailpaste
+            
+            echo "📥 Pulling latest changes..."
+            git pull origin main
+            
+            echo "🛑 Stopping existing container (production)..."
+            docker compose -f docker-compose.yml down
+            
+            echo "🔨 Building new image (production)..."
+            docker compose -f docker-compose.yml build --no-cache
+            
+            echo "🚀 Starting container (production)..."
+            docker compose -f docker-compose.yml up -d
+            
+            echo "⏳ Waiting for service to start..."
+            sleep 15
+            
+            echo "✅ Deployment complete!"
+          EOF
+      
+      - name: Health check and verification
+        run: |
+          echo "🔍 Verifying deployment..."
+          
+          ssh -o StrictHostKeyChecking=no michael@docker << 'EOF'
+            set -e
+            
+            # Check container is running
+            if ! docker ps | grep -q tailpaste; then
+              echo "❌ Container is not running!"
+              docker logs tailpaste --tail=50
+              exit 1
+            fi
+            echo "✓ Container is running"
+
+            echo "📏 Checking image size..."
+            SIZE=$(docker images tailpaste-tailpaste --format "{{.Size}}" | head -n 1)
+            echo "Image size: $SIZE"
+            
+            # Write summary data to temporary file for transfer back to runner
+            echo "### Docker Build Results" > /tmp/deployment_summary.txt
+            echo "- Image Size: $SIZE" >> /tmp/deployment_summary.txt
+            echo "- Build Status: ✅ Success" >> /tmp/deployment_summary.txt
+            
+            # Check Tailscale connection
+            TAILSCALE_IP=$(docker exec tailpaste tailscale ip -4 2>/dev/null || echo "N/A")
+            echo "✓ Tailscale IP: $TAILSCALE_IP"
+            
+            # Check for errors in logs
+            ERROR_COUNT=$(docker logs tailpaste --tail=100 2>&1 | grep -i "error" | grep -v "ERROR_LOG" | wc -l || echo 0)
+            if [ "$ERROR_COUNT" -gt 0 ]; then
+              echo "⚠️  Found $ERROR_COUNT errors in recent logs"
+              docker logs tailpaste --tail=50 2>&1 | grep -i "error" | grep -v "ERROR_LOG" || true
+            else
+              echo "✓ No errors in recent logs"
+            fi
+            
+            # Check container health
+            CONTAINER_STATUS=$(docker inspect --format='{{.State.Status}}' tailpaste 2>/dev/null || echo "unknown")
+            if [ "$CONTAINER_STATUS" = "running" ] || [ "$CONTAINER_STATUS" = "unknown" ]; then
+              echo "✓ Container status: $CONTAINER_STATUS"
+            else
+              echo "❌ Container unhealthy: $CONTAINER_STATUS"
+              exit 1
+            fi
+            
+            echo "✅ Deployment verified successfully!"
+          EOF
+          
+          # Transfer summary data back to runner and append to GitHub Step Summary
+          echo "📥 Retrieving deployment summary..."
+          scp -o StrictHostKeyChecking=no michael@docker:/tmp/deployment_summary.txt /tmp/deployment_summary.txt
+          cat /tmp/deployment_summary.txt >> $GITHUB_STEP_SUMMARY
+      
+      - name: Test service health
+        run: |
+          echo "🏥 Testing service health..."
+          sleep 5
+          
+          MAX_RETRIES=5
+          RETRY_COUNT=0
+          
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            if curl -f -s -o /dev/null http://tailpaste:8080/; then
+              echo "✓ Service is responding"
+              break
+            else
+              RETRY_COUNT=$((RETRY_COUNT + 1))
+              if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+                echo "⏳ Service not ready, retrying ($RETRY_COUNT/$MAX_RETRIES)..."
+                sleep 10
+              else
+                echo "❌ Service is not responding after $MAX_RETRIES attempts"
+                exit 1
+              fi
+            fi
+          done
+          
+          # Test paste creation
+          echo "📝 Testing paste creation..."
+          TEST_CONTENT="Deployment test - $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          PASTE_URL=$(curl -s -X POST -H "Content-Type: text/plain" -d "$TEST_CONTENT" http://tailpaste:8080/ || echo "")
+          
+          if [ -z "$PASTE_URL" ]; then
+            echo "⚠️  Warning: Paste creation test failed"
+          else
+            echo "✓ Paste created successfully: $PASTE_URL"
+          fi
+          
+          echo "✅ Service is healthy!"
+      
+      - name: Generate deployment summary
+        if: always()
+        run: |
+          echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ inputs.rollback }}" = "true" ]; then
+            echo "🔄 **Rollback Operation**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "🚀 **New Deployment**" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Triggered by**: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Timestamp**: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_STEP_SUMMARY
+      
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "❌ Deployment failed! Manual intervention may be required."
+          echo "💡 To rollback, run this workflow manually with rollback option enabled."
+

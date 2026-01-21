@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "======================================"
+echo "🧹 Auto-fixing CI issues"
+echo "======================================"
+
+# Ensure we're in repo root
+if [ ! -d "src" ] || [ ! -d "tests" ]; then
+  echo "❌ Must be run from repo root"
+  exit 1
+fi
+
+echo "🔧 Installing fixer tools (if needed)..."
+python -m pip install --quiet --upgrade ruff black
+
+echo
+echo "🧠 Running Ruff auto-fixes..."
+ruff check src tests \
+  --fix \
+  --select F401,F541,E713,E402
+
+echo
+echo "🎯 Fixing known-safe E402 in tests/test_main.py..."
+
+python <<'PY'
+from pathlib import Path
+
+path = Path("tests/test_main.py")
+lines = path.read_text().splitlines()
+
+imports = []
+body = []
+seen_non_import = False
+
+for line in lines:
+    stripped = line.strip()
+    if stripped.startswith(("import ", "from ")) and not seen_non_import:
+        imports.append(line)
+    else:
+        seen_non_import = True
+        body.append(line)
+
+# If imports already at top, do nothing
+if body and body[0].strip().startswith(("import ", "from ")):
+    print("✓ test_main.py already fixed")
+else:
+    new_lines = imports + [""] + body
+    path.write_text("\n".join(new_lines) + "\n")
+    print("✓ Moved imports to top of tests/test_main.py")
+PY
+
+echo
+echo "🎨 Running Black formatter..."
+black src tests
+
+echo
+echo "🔍 Verifying with flake8..."
+flake8 src tests --max-line-length=120
+
+echo
+echo "✅ All CI issues fixed successfully"

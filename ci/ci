@@ -1,0 +1,148 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# -----------------------------
+# Configuration
+# -----------------------------
+PYTHON_VERSION="3.11"
+COVERAGE_FAIL_UNDER=70
+IMAGE_NAME="tailpaste"
+GIT_SHA=$(git rev-parse --short HEAD)
+DOCKER_CONTEXT="remote-build"
+
+# -----------------------------
+# Helpers
+# -----------------------------
+section() {
+  echo
+  echo "======================================"
+  echo "$1"
+  echo "======================================"
+}
+
+command_exists() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+docker_ctx() {
+  docker --context "$DOCKER_CONTEXT" "$@"
+}
+
+# -----------------------------
+# Environment Checks
+# -----------------------------
+section "🔎 Checking prerequisites"
+
+if ! command_exists python; then
+  echo "❌ Python is not installed"
+  exit 1
+fi
+
+if ! python --version | grep -q "$PYTHON_VERSION"; then
+  echo "⚠️  Warning: Expected Python $PYTHON_VERSION, found $(python --version)"
+fi
+
+if ! command_exists docker; then
+  echo "❌ Docker is not installed or not on PATH"
+  exit 1
+fi
+
+
+section "🐳 Resolving Docker context ($DOCKER_CONTEXT)"
+
+if docker context inspect "$DOCKER_CONTEXT" >/dev/null 2>&1; then
+  echo "✓ Docker context '$DOCKER_CONTEXT' found"
+else
+  echo "⚠️  Docker context '$DOCKER_CONTEXT' not found"
+  echo "🔎 Attempting to auto-create context from Tailscale SSH..."
+
+  if ! command_exists tailscale; then
+    echo "❌ Tailscale CLI not found; cannot auto-create Docker context"
+    exit 1
+  fi
+
+  TAILSCALE_HOST=$(tailscale status --json | jq -r '.Peer[] | select(.HostName=="docker") | .DNSName' | head -n1)
+
+  if [ -z "$TAILSCALE_HOST" ] || [ "$TAILSCALE_HOST" = "null" ]; then
+    echo "❌ Could not find Tailscale node named 'docker'"
+    exit 1
+  fi
+
+  echo "✓ Found Tailscale node: $TAILSCALE_HOST"
+  echo "➕ Creating Docker context '$DOCKER_CONTEXT'"
+
+  docker context create "$DOCKER_CONTEXT" \
+    --docker "host=ssh://$TAILSCALE_HOST"
+
+  echo "✓ Docker context '$DOCKER_CONTEXT' created"
+fi
+
+# -----------------------------
+# Python Setup
+# -----------------------------
+section "🐍 Setting up Python environment"
+
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+pip install pytest-cov flake8 black mypy bandit coverage
+
+# -----------------------------
+# Code Quality Checks
+# -----------------------------
+section "🔍 Running linting (flake8)"
+flake8 src/ tests/ --max-line-length=120 --exclude=venv
+
+section "🎨 Checking code formatting (black)"
+black --check src/ tests/
+
+section "🔍 Type checking (mypy)"
+mypy src/ --ignore-missing-imports
+
+section "🔒 Security scanning (bandit)"
+bandit -r src/ -ll
+
+# -----------------------------
+# Tests & Coverage
+# -----------------------------
+section "🧪 Running tests with coverage"
+
+pytest \
+  --cov=src \
+  tests/ \
+  --cov-report=xml \
+  --cov-report=term-missing
+
+coverage report --fail-under="$COVERAGE_FAIL_UNDER"
+
+# -----------------------------
+# Docker Build & Test (Tailscale node)
+# -----------------------------
+section "🐳 Building Docker image (context: $DOCKER_CONTEXT)"
+
+section "🔑 Loading remote secret"
+
+# Local-only secret loading
+if [[ -f ci/load_remote_secret ]]; then
+  source ci/load_remote_secret
+fi
+
+
+docker_ctx compose -f ci/docker-compose.ci.yml build
+
+section "🧪 Testing Docker image"
+
+docker_ctx compose -f ci/docker-compose.ci.yml up -d
+# Basic smoke test
+sleep 5
+curl -sf http://tailpaste-ci:8080/ >/dev/null
+
+section "📏 Checking Docker image size"
+
+docker_ctx images | grep "${IMAGE_NAME}" || true
+
+docker_ctx compose -f ci/docker-compose.ci.yml down -v
+
+# -----------------------------
+# Done
+# -----------------------------
+section "✅ Local CI completed successfully"
