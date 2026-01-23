@@ -13,6 +13,10 @@ jobs:
     runs-on:
       - tailpaste-runners
     
+    permissions:
+      contents: read
+      actions: write  # Required to trigger deploy workflow
+    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
