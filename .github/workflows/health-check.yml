@@ -37,7 +37,7 @@ jobs:
       - name: Run health check
         id: health_check
         env:
-          TAILPASTE_URL: ${{ vars.TAILPASTE_URL || 'http://localhost:8080' }}
+          TAILPASTE_URL: ${{ vars.TAILPASTE_URL }}
         run: |
           echo "🏥 Running health check..."
           echo "🛠️ Checking environment variables..."
