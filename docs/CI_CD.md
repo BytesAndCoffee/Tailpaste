@@ -62,6 +62,7 @@ git push origin v1.0.0                   # Push tag (triggers release)
 | **Security** | Push, PR, Daily | 3-5 min | Vulnerability scanning |
 | **Deploy** | Integration success | 3-5 min | Production deployment |
 | **Release** | Version tag | 10-15 min | Release & deployment |
+| **Health Check** | Hourly | 1-2 min | Service monitoring & auto-recovery |
 
 ### Key Paths
 
@@ -106,6 +107,19 @@ git push origin v1.0.0                   # Push tag (triggers release)
         │                      │  - Backup
         │                      │  - Deploy
         └──────────────────────┘  - Health check
+
+┌─────────────────────────────────────────────────────────────────┐
+│                   CONTINUOUS MONITORING                          │
+│  ┌──────────────────┐                                            │
+│  │ Health Check     │ → Hourly automated checks                 │
+│  │ (Hourly Cron)    │    - Service availability                 │
+│  └────────┬─────────┘    - Database integrity                   │
+│           │              - Tailscale connectivity                │
+│           ↓                                                       │
+│  ┌──────────────────┐                                            │
+│  │ Auto-Recovery    │ → On failure: trigger deploy             │
+│  └──────────────────┘                                            │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ### Release Pipeline
@@ -300,6 +314,48 @@ This cleanup runs even if previous steps fail (`if: always()`) and never fails t
 - Response time validation
 - Paste creation test
 - Database integrity
+
+### Health Check Workflow
+
+**File**: `.github/workflows/health-check.yml`
+
+**Triggers**:
+- Scheduled hourly (at minute 0)
+- Manual dispatch for testing
+
+**Features**:
+- Automated service availability checks
+- Database integrity verification
+- Tailscale connectivity validation
+- Docker logs analysis
+- Automatic recovery via deploy trigger
+
+**Process**:
+1. Connect to Tailscale network
+2. Run comprehensive health checks using `scripts/health_check.py`
+3. Export results as artifacts
+4. If any check fails, automatically trigger deployment workflow
+5. Generate detailed summary reports
+
+**Auto-Recovery**:
+When health checks fail, the workflow automatically:
+- Triggers the deploy workflow to redeploy the service
+- Generates notifications with failure details
+- Provides actionable next steps for manual intervention if needed
+
+**Manual Testing**:
+```bash
+# Test locally
+python3 scripts/health_check.py
+
+# Run workflow manually
+# GitHub Actions → Health Check → Run workflow
+```
+
+**Health Check Results**:
+- Stored as artifacts for 30 days
+- JSON format for integration with monitoring tools
+- Detailed logs in GitHub Actions summary
 
 ### Release Workflow
 
@@ -562,13 +618,15 @@ docker ps -a --filter "label=environment=production"
 
 ### Monitoring
 
-1. **Regular checks**: Run health checks hourly via cron
+1. **Automated hourly checks**: GitHub Actions Health Check workflow runs every hour
 
-2. **Log analysis**: Daily review for errors and trends
+2. **Regular manual checks**: Run health checks manually via cron or on-demand
 
-3. **Disk management**: Monitor storage and archive logs
+3. **Log analysis**: Daily review for errors and trends
 
-4. **Security**: Review daily scans and update dependencies
+4. **Disk management**: Monitor storage and archive logs
+
+5. **Security**: Review daily scans and update dependencies
 
 ### Security
 
