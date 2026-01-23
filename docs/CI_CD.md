@@ -618,9 +618,9 @@ docker ps -a --filter "label=environment=production"
 
 ### Monitoring
 
-1. **Automated hourly checks**: GitHub Actions Health Check workflow runs every hour
+1. **Automated hourly checks**: GitHub Actions Health Check workflow runs automatically every hour
 
-2. **Regular manual checks**: Run health checks manually via cron or on-demand
+2. **Manual health checks**: Run health checks on-demand locally or via workflow dispatch
 
 3. **Log analysis**: Daily review for errors and trends
 
