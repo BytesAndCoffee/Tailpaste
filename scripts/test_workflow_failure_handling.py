@@ -9,18 +9,22 @@ by simulating various failure scenarios.
 import argparse
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 
 def simulate_failure(failure_type: str, export_path: str = None):
     """Simulate different types of health check failures."""
     
+    # Generate a consistent timestamp for all scenarios in this run
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    
     failure_scenarios = {
         "service": {
             "description": "Service unavailable - simulates network error",
             "exit_code": 1,
             "results": {
-                "timestamp": "2026-01-23T19:36:34Z",
+                "timestamp": timestamp,
                 "checks": {
                     "service": False,
                     "database": True,
@@ -36,7 +40,7 @@ def simulate_failure(failure_type: str, export_path: str = None):
             "description": "Database integrity failure",
             "exit_code": 1,
             "results": {
-                "timestamp": "2026-01-23T19:36:34Z",
+                "timestamp": timestamp,
                 "checks": {
                     "service": True,
                     "database": False,
@@ -52,7 +56,7 @@ def simulate_failure(failure_type: str, export_path: str = None):
             "description": "Multiple check failures",
             "exit_code": 1,
             "results": {
-                "timestamp": "2026-01-23T19:36:34Z",
+                "timestamp": timestamp,
                 "checks": {
                     "service": False,
                     "database": False,
@@ -72,7 +76,7 @@ def simulate_failure(failure_type: str, export_path: str = None):
             "description": "Service timeout - slow response",
             "exit_code": 1,
             "results": {
-                "timestamp": "2026-01-23T19:36:34Z",
+                "timestamp": timestamp,
                 "checks": {
                     "service": False,
                     "database": True,
