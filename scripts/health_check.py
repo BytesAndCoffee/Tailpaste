@@ -264,6 +264,12 @@ class HealthChecker:
         print("📊 Health Check Summary")
         print("=" * 60)
 
+        # Print active configuration
+        print("\n🛠️ Active Configuration:")
+        for key, value in self.config.items():
+            print(f"  {key}: {value}")
+
+        print()
         all_passed = all(self.results.values())
 
         for check_name, passed in self.results.items():
