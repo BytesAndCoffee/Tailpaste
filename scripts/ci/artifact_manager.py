@@ -133,7 +133,7 @@ class ArtifactManager:
             return False
 
         import time
-        max_retries = 5
+        max_retries = 8  # Increased from 5 to allow more time for GHCR propagation
         retry_delay = 2  # seconds
         
         for attempt in range(max_retries):
@@ -143,6 +143,7 @@ class ArtifactManager:
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
                 
                 if result.returncode == 0:
+                    print(f"✓ Artifact validation successful on attempt {attempt + 1}", file=sys.stderr)
                     return True
                     
                 # If not found and not last attempt, wait before retry
@@ -150,12 +151,19 @@ class ArtifactManager:
                     print(f"Attempt {attempt + 1}/{max_retries} failed, retrying in {retry_delay}s...", file=sys.stderr)
                     time.sleep(retry_delay)
                     retry_delay *= 2  # Exponential backoff
+                else:
+                    # Last attempt failed
+                    print(f"Attempt {attempt + 1}/{max_retries} failed (final attempt)", file=sys.stderr)
+                    if result.stderr:
+                        print(f"Error output: {result.stderr.strip()}", file=sys.stderr)
                     
             except subprocess.TimeoutExpired:
                 if attempt < max_retries - 1:
-                    print(f"Timeout on attempt {attempt + 1}/{max_retries}, retrying...", file=sys.stderr)
+                    print(f"Timeout on attempt {attempt + 1}/{max_retries}, retrying in {retry_delay}s...", file=sys.stderr)
                     time.sleep(retry_delay)
                     retry_delay *= 2
+                else:
+                    print(f"Timeout on attempt {attempt + 1}/{max_retries} (final attempt)", file=sys.stderr)
                     
             except subprocess.SubprocessError as e:
                 print(f"Subprocess error: {e}", file=sys.stderr)
