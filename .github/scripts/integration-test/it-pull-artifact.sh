@@ -9,7 +9,9 @@ set -euo pipefail
 ARTIFACT_DIGEST=$1
 REGISTRY=$2
 IMAGE_NAME=$3
-FULL_IMAGE="$REGISTRY/$IMAGE_NAME@$ARTIFACT_DIGEST"
+# Docker requires lowercase repository names
+IMAGE_NAME_LOWER=$(echo "$IMAGE_NAME" | tr '[:upper:]' '[:lower:]')
+FULL_IMAGE="$REGISTRY/$IMAGE_NAME_LOWER@$ARTIFACT_DIGEST"
 
 echo "🐳 Pulling exact artifact for integration testing..."
 echo "Pulling image: $FULL_IMAGE"
