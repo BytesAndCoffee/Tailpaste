@@ -62,8 +62,10 @@ class ArtifactManager:
     def validate_registry_access(self, registry: str, repository: str) -> bool:
         """Validate that we can access the container registry."""
         try:
+            # Docker requires repository names to be lowercase
+            repository_lower = repository.lower()
             # Try to get repository info using docker command
-            cmd = ["docker", "manifest", "inspect", f"{registry}/{repository}:latest"]
+            cmd = ["docker", "manifest", "inspect", f"{registry}/{repository_lower}:latest"]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             return result.returncode == 0
         except (subprocess.TimeoutExpired, subprocess.SubprocessError):
@@ -136,10 +138,13 @@ class ArtifactManager:
         max_retries = 8  # Increased from 5 to allow more time for GHCR propagation
         retry_delay = 2  # seconds
         
+        # Docker requires repository names to be lowercase
+        repository_lower = repository.lower()
+        
         for attempt in range(max_retries):
             try:
                 # Use docker buildx imagetools inspect for better registry compatibility
-                cmd = ["docker", "buildx", "imagetools", "inspect", f"{registry}/{repository}@{digest}"]
+                cmd = ["docker", "buildx", "imagetools", "inspect", f"{registry}/{repository_lower}@{digest}"]
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
                 
                 if result.returncode == 0:
