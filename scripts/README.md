@@ -1,312 +1,302 @@
 # Tailpaste Scripts
 
-This directory contains automation scripts for development, monitoring, and maintenance of the Tailpaste service.
+Organized collection of automation and management scripts for Tailpaste CI/CD, development, and operations.
 
-## Scripts Overview
+## Directory Structure
 
-### Monitoring & Health
-
-- **`health_check.py`** - Comprehensive health monitoring
-- **`log_analyzer.py`** - Docker log analysis and metrics
-- **`monitor.sh`** - Unified monitoring with alerting
-
-### Development Tools
-
-- **`pre-commit-hook.py`** - Code quality checks before commits
-- **`setup-hooks.sh`** - Install Git hooks
+```
+scripts/
+├── ci/              # CI/CD pipeline scripts
+├── dev/             # Development tools
+├── health/          # Health monitoring & diagnostics
+├── workflows/       # GitHub Actions workflow helpers
+└── README.md        # This file
+```
 
 ## Quick Start
 
-### Setup Git Hooks
+### Development Setup
 
 ```bash
-./scripts/setup-hooks.sh
+# Install Git hooks for code quality
+./scripts/dev/setup-hooks.sh
+
+# Run cleanup
+./scripts/dev/cleanup.sh
 ```
 
-This installs pre-commit, commit-msg, and pre-push hooks for code quality.
+### Health Monitoring
 
-### Run Health Check
+```bash
+# Run health check
+python3 scripts/health/health_check.py
+
+# Analyze logs
+python3 scripts/health/log_analyzer.py
+
+# Start monitoring
+./scripts/health/monitor.sh
+```
+
+### CI/CD Operations
+
+```bash
+# Check artifact status
+python3 scripts/ci/artifact_manager.py get-status --digest <digest>
+
+# Check circuit breaker
+python3 scripts/ci/circuit_breaker.py status
+
+# Generate rollback plan
+python3 scripts/ci/rollback_manager.py plan
+```
+
+## Scripts by Category
+
+### 📁 ci/ - CI/CD Pipeline
+
+| Script | Description |
+|--------|-------------|
+| `artifact_manager.py` | Artifact lifecycle management |
+| `circuit_breaker.py` | Circuit breaker management |
+| `rollback_manager.py` | Rollback planning and execution |
+| `manual_action_manager.py` | Manual action logging and auditing |
+| `test_workflow_failure_handling.py` | Test failure simulation |
+| `ci` | Local CI runner script |
+| `fix-ci` | Auto-fix CI issues |
+
+**Usage Examples:**
+
+```bash
+# Artifact management
+python3 scripts/ci/artifact_manager.py check-existing --commit abc123
+python3 scripts/ci/artifact_manager.py record-artifact --commit abc123 --digest sha256:...
+
+# Circuit breaker
+python3 scripts/ci/circuit_breaker.py status
+python3 scripts/ci/circuit_breaker.py reset --type recovery
+
+# Rollback
+python3 scripts/ci/rollback_manager.py plan --target-version v1.2.3
+python3 scripts/ci/rollback_manager.py validate
+```
+
+### 🔧 dev/ - Development Tools
+
+| Script | Description |
+|--------|-------------|
+| `pre-commit-hook.py` | Code quality checks before commits |
+| `setup-hooks.sh` | Install Git hooks |
+| `cleanup.sh` | Clean cache and temporary files |
+| `validate-workflows.py` | Validate GitHub Actions YAML |
+| `validate_artifact_workflow.py` | Validate artifact workflow |
+| `validate_ci_gating.py` | Validate CI quality gates |
+
+**Usage Examples:**
+
+```bash
+# Setup development environment
+./scripts/dev/setup-hooks.sh
+
+# Validate workflows
+python3 scripts/dev/validate-workflows.py
+
+# Clean up project
+./scripts/dev/cleanup.sh
+```
+
+### 🏥 health/ - Health Monitoring
+
+| Script | Description |
+|--------|-------------|
+| `health_check.py` | Comprehensive health monitoring |
+| `health_monitor.py` | Health monitoring utility for CI/CD |
+| `log_analyzer.py` | Docker log analysis |
+| `monitor.sh` | Unified monitoring script |
+| `parse_health_results.py` | Parse health check JSON |
+| `update_health_history.py` | Update health check history |
+| `count_consecutive_degraded.py` | Count degraded checks |
+
+**Usage Examples:**
 
 ```bash
 # Basic health check
-python3 scripts/health_check.py
+python3 scripts/health/health_check.py
 
 # Export results
-python3 scripts/health_check.py --export logs/health.json
+python3 scripts/health/health_check.py --export /tmp/health.json
+
+# Parse results
+python3 scripts/health/parse_health_results.py /tmp/health.json overall_status
+
+# Monitor service
+./scripts/health/monitor.sh
 ```
 
-### Analyze Logs
+### 🔄 workflows/ - Workflow Helpers
+
+| Script | Description |
+|--------|-------------|
+| `workflow_status_monitor.py` | Workflow status monitoring and reporting |
+| `workflow_error_handler.py` | Workflow error handling |
+| `orchestration_helper.py` | Workflow orchestration utilities |
+
+**Usage Examples:**
 
 ```bash
-# Analyze recent logs
-python3 scripts/log_analyzer.py
+# Monitor workflow status
+python3 scripts/workflows/workflow_status_monitor.py --repository owner/repo
 
-# Detailed analysis
-python3 scripts/log_analyzer.py --lines 5000 --export logs/analysis.json
+# Get workflow health
+python3 scripts/workflows/workflow_status_monitor.py status ci
+
+# Handle workflow errors
+python3 scripts/workflows/workflow_error_handler.py analyze
 ```
 
-### Start Monitoring
+## Common Operations
+
+### Running Health Checks
 
 ```bash
-# One-time monitoring cycle
-./scripts/monitor.sh
+# Quick health check
+python3 scripts/health/health_check.py
 
-# Schedule with cron (every 5 minutes)
-*/5 * * * * /path/to/Tailpaste/scripts/monitor.sh
+# JSON output for automation
+python3 scripts/health/health_check.py --json
+
+# Silent mode (only summary)
+python3 scripts/health/health_check.py --silent
 ```
 
-## Script Details
-
-### health_check.py
-
-**Purpose:** Monitor service health and database integrity
-
-**Checks:**
-- HTTP service availability
-- Response time
-- Database integrity
-- Database size
-- Tailscale connectivity
-- Docker log errors
-
-**Usage:**
-```bash
-python3 scripts/health_check.py [OPTIONS]
-
-Options:
-  --config PATH    Path to config file
-  --export PATH    Export results to JSON
-  --silent         Only output summary
-```
-
-**Exit codes:**
-- `0` - All checks passed
-- `1` - One or more checks failed
-
-### log_analyzer.py
-
-**Purpose:** Analyze Docker logs for errors and patterns
-
-**Features:**
-- Error categorization (database, network, auth, etc.)
-- Request pattern analysis
-- Status code distribution
-- IP address tracking
-- Performance metrics
-
-**Usage:**
-```bash
-python3 scripts/log_analyzer.py [OPTIONS]
-
-Options:
-  --container NAME    Container name (default: tailpaste)
-  --lines N          Number of lines (default: 1000)
-  --export PATH      Export to JSON
-  --errors-only      Show only errors
-```
-
-### monitor.sh
-
-**Purpose:** Unified monitoring with alerting
-
-**Features:**
-- Runs health checks
-- Analyzes logs
-- Checks disk space
-- Verifies container status
-- Sends alerts (Slack/Email)
-- Cleans up old logs
-
-**Configuration:**
-```bash
-export SLACK_WEBHOOK_URL="https://hooks.slack.com/..."
-export EMAIL_ALERT="admin@example.com"
-export ALERT_ON_WARNING="true"
-export STORAGE_PATH="./storage"
-```
-
-### pre-commit-hook.py
-
-**Purpose:** Enforce code quality before commits
-
-**Checks:**
-- Black code formatting
-- Flake8 linting
-- Mypy type checking
-- Test file existence
-- Test suite execution
-
-**Automatic installation:** Run `./scripts/setup-hooks.sh`
-
-### setup-hooks.sh
-
-**Purpose:** Install Git hooks for development
-
-**Installs:**
-- `pre-commit` - Code quality checks
-- `commit-msg` - Message validation
-- `pre-push` - Test validation
-
-**Usage:**
-```bash
-./scripts/setup-hooks.sh
-```
-
-## Configuration
-
-### Health Check Config
-
-Create `health_check_config.json`:
-```json
-{
-  "service_url": "http://localhost:8080",
-  "storage_path": "./storage",
-  "max_db_size_mb": 500,
-  "response_timeout": 10,
-  "critical_error_threshold": 10,
-  "tailscale_check": true
-}
-```
-
-### Monitoring Alerts
-
-Set environment variables:
-```bash
-# Slack webhook
-export SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."
-
-# Email alerts
-export EMAIL_ALERT="admin@example.com"
-
-# Alert on warnings (not just errors)
-export ALERT_ON_WARNING="true"
-```
-
-## Cron Examples
-
-### Monitoring Schedule
+### Managing Artifacts
 
 ```bash
-# Every 5 minutes
-*/5 * * * * /path/to/Tailpaste/scripts/monitor.sh
+# Check if artifact exists
+python3 scripts/ci/artifact_manager.py check-existing \
+  --commit $(git rev-parse HEAD)
 
-# Hourly
-0 * * * * /path/to/Tailpaste/scripts/monitor.sh
+# Record new artifact
+python3 scripts/ci/artifact_manager.py record-artifact \
+  --commit $(git rev-parse HEAD) \
+  --digest sha256:abc123...
 
-# Daily at 2 AM
-0 2 * * * /path/to/Tailpaste/scripts/monitor.sh
+# Validate artifact in registry
+python3 scripts/ci/artifact_manager.py validate-digest \
+  --digest sha256:abc123...
 ```
 
-### Health Checks
+### Circuit Breaker Operations
 
 ```bash
-# Every 15 minutes, export to JSON
-*/15 * * * * python3 /path/to/Tailpaste/scripts/health_check.py --export /path/to/logs/health-$(date +\%Y\%m\%d-\%H\%M).json
+# Check status
+python3 scripts/ci/circuit_breaker.py status
+
+# Reset specific breaker
+python3 scripts/ci/circuit_breaker.py reset --type deployment
+
+# Increment failure count
+python3 scripts/ci/circuit_breaker.py increment --type recovery
 ```
 
-### Log Analysis
+## Integration with GitHub Actions
+
+These scripts integrate with GitHub Actions workflows:
+
+- **CI**: [.github/workflows/ci.yml](../.github/workflows/ci.yml)
+- **Integration Tests**: [.github/workflows/integration-test.yml](../.github/workflows/integration-test.yml)
+- **Deploy**: [.github/workflows/deploy.yml](../.github/workflows/deploy.yml)
+- **Health Monitoring**: [.github/workflows/health-monitor.yml](../.github/workflows/health-monitor.yml)
+- **Recovery**: [.github/workflows/recovery.yml](../.github/workflows/recovery.yml)
+
+## Environment Variables
+
+Common environment variables used across scripts:
+
+| Variable | Description |
+|----------|-------------|
+| `GITHUB_TOKEN` | GitHub API authentication |
+| `GH_TOKEN` | Alternative GitHub token |
+| `TAILPASTE_URL` | Tailpaste service URL |
+| `STORAGE_PATH` | Storage directory path |
+| `REGISTRY` | Container registry (ghcr.io) |
+| `IMAGE_NAME` | Container image name |
+
+## Development Guidelines
+
+### Adding New Scripts
+
+1. Place in appropriate subdirectory (`ci/`, `dev/`, `health/`, `workflows/`)
+2. Add shebang line: `#!/usr/bin/env python3` or `#!/usr/bin/env bash`
+3. Make executable: `chmod +x scripts/category/script.py`
+4. Include docstring with description
+5. Add `--help` argument support
+6. Update this README with script description
+7. Add tests if applicable
+
+### Script Standards
+
+- **Error Handling**: Use `set -euo pipefail` for bash scripts
+- **Documentation**: Include header comments
+- **Exit Codes**: 0 for success, non-zero for errors
+- **Output**: Use emoji prefixes for visibility
+- **JSON**: Export results to JSON when possible
+- **Testing**: Add unit tests for Python scripts
+
+## Testing
 
 ```bash
-# Daily log analysis at 1 AM
-0 1 * * * python3 /path/to/Tailpaste/scripts/log_analyzer.py --export /path/to/logs/daily-$(date +\%Y\%m\%d).json
+# Run script tests
+pytest tests/test_health_check.py -v
+pytest tests/test_artifact_manager.py -v
+
+# Validate workflows
+python3 scripts/dev/validate-workflows.py
+
+# Test health checks
+python3 scripts/health/health_check.py --silent
 ```
-
-## Dependencies
-
-All scripts require Python 3.8+ and standard system tools:
-
-```bash
-# Python packages (already in requirements.txt)
-pip install pytest flake8 black mypy
-
-# System tools
-- docker
-- curl
-- jq (optional, for JSON parsing in bash)
-- mail (optional, for email alerts)
-```
-
-## Log Files
-
-Scripts create logs in `logs/` directory:
-
-- `logs/monitor-YYYYMMDD.log` - Monitoring logs
-- `logs/health-*.json` - Health check reports
-- `logs/log-analysis-*.json` - Log analysis reports
-
-**Log rotation:** Monitor script automatically cleans logs older than 30 days.
 
 ## Troubleshooting
 
-### Scripts not executable
+### Permission Denied
 
 ```bash
-chmod +x scripts/*.sh scripts/*.py
+chmod +x scripts/category/script.sh
 ```
 
-### Python module not found
+### Python Module Not Found
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### Docker permission denied
+### Script Not Working
 
-```bash
-# Add user to docker group
-sudo usermod -aG docker $USER
-# Then logout and login
-```
-
-### Tailscale command not found
-
-Health check will skip Tailscale check if CLI is not available. This is expected when running outside the container.
-
-### No logs directory
-
-Scripts automatically create the `logs/` directory when needed.
-
-## Integration with CI/CD
-
-These scripts are integrated into GitHub Actions workflows:
-
-- **CI workflow** - Uses pre-commit checks
-- **Security workflow** - Similar scanning logic
-- **Deploy workflow** - Uses health checks for verification
-- **Monitoring workflow** - Could trigger these scripts on schedule
-
-See [docs/CI_CD.md](../docs/CI_CD.md) for details.
-
-## Best Practices
-
-1. **Run health checks regularly** - Set up cron jobs
-2. **Monitor alerts** - Configure Slack/Email notifications
-3. **Review logs weekly** - Check for patterns and trends
-4. **Use pre-commit hooks** - Catch issues before committing
-5. **Export reports** - Keep historical data for analysis
-6. **Clean up old logs** - Let monitor script handle rotation
-
-## Contributing
-
-When adding new scripts:
-
-1. Make executable: `chmod +x scripts/new_script.sh`
-2. Add documentation to this README
-3. Add to CI/CD documentation if relevant
-4. Include error handling
-5. Support `--help` option
-6. Export results to JSON when possible
-
-## Support
-
-For issues with scripts:
 1. Check script is executable
 2. Verify dependencies installed
 3. Review error messages
-4. Check logs directory
-5. Open a GitHub issue if needed
+4. Check environment variables
+5. Consult [docs/CI_CD.md](../docs/CI_CD.md)
+
+## Related Documentation
+
+- [CI/CD Documentation](../docs/CI_CD.md) - Complete CI/CD pipeline docs
+- [Recovery System](../docs/RECOVERY_SYSTEM.md) - Recovery and redeployment
+- [Inspector Guide](../docs/INSPECTOR_GUIDE.md) - Monitoring and debugging
+- [GitHub Scripts README](../.github/scripts/README.md) - GitHub Actions scripts
+
+## Support
+
+For issues:
+1. Check script help: `script.py --help`
+2. Review error messages
+3. Check logs directory
+4. Consult documentation
+5. Open GitHub issue
 
 ---
 
-**Directory:** `/scripts`  
-**Last Updated:** January 2026
+**Directory**: `/scripts`  
+**Last Updated**: January 23, 2026  
+**Maintainer**: Tailpaste Team

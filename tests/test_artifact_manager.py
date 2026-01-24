@@ -13,7 +13,7 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 # Import the artifact manager - must be after sys.path modification
-sys.path.append("scripts")
+sys.path.append("scripts/ci")
 from artifact_manager import ArtifactManager  # noqa: E402
 
 
@@ -240,7 +240,7 @@ class TestArtifactManagerIntegration(unittest.TestCase):
         result = subprocess.run(
             [
                 "python",
-                f"{self.original_cwd}/scripts/artifact_manager.py",
+                f"{self.original_cwd}/scripts/ci/artifact_manager.py",
                 "record-artifact",
                 "--digest",
                 digest,
@@ -261,7 +261,7 @@ class TestArtifactManagerIntegration(unittest.TestCase):
         result = subprocess.run(
             [
                 "python",
-                f"{self.original_cwd}/scripts/artifact_manager.py",
+                f"{self.original_cwd}/scripts/ci/artifact_manager.py",
                 "check-existing",
                 "--registry",
                 registry,
@@ -280,7 +280,7 @@ class TestArtifactManagerIntegration(unittest.TestCase):
         result = subprocess.run(
             [
                 "python",
-                f"{self.original_cwd}/scripts/artifact_manager.py",
+                f"{self.original_cwd}/scripts/ci/artifact_manager.py",
                 "get-digest",
                 "--commit",
                 commit,
@@ -307,7 +307,7 @@ class TestArtifactManagerIntegration(unittest.TestCase):
         result = subprocess.run(
             [
                 "python",
-                f"{self.original_cwd}/scripts/artifact_manager.py",
+                f"{self.original_cwd}/scripts/ci/artifact_manager.py",
                 "record-artifact",
                 "--digest",
                 digest,
@@ -327,7 +327,7 @@ class TestArtifactManagerIntegration(unittest.TestCase):
         result = subprocess.run(
             [
                 "python",
-                f"{self.original_cwd}/scripts/artifact_manager.py",
+                f"{self.original_cwd}/scripts/ci/artifact_manager.py",
                 "update-status",
                 "--digest",
                 digest,
@@ -345,7 +345,7 @@ class TestArtifactManagerIntegration(unittest.TestCase):
         result = subprocess.run(
             [
                 "python",
-                f"{self.original_cwd}/scripts/artifact_manager.py",
+                f"{self.original_cwd}/scripts/ci/artifact_manager.py",
                 "get-status",
                 "--digest",
                 digest,
@@ -360,7 +360,7 @@ class TestArtifactManagerIntegration(unittest.TestCase):
         result = subprocess.run(
             [
                 "python",
-                f"{self.original_cwd}/scripts/artifact_manager.py",
+                f"{self.original_cwd}/scripts/ci/artifact_manager.py",
                 "record-test-result",
                 "--digest",
                 digest,
@@ -382,7 +382,7 @@ class TestArtifactManagerIntegration(unittest.TestCase):
         result = subprocess.run(
             [
                 "python",
-                f"{self.original_cwd}/scripts/artifact_manager.py",
+                f"{self.original_cwd}/scripts/ci/artifact_manager.py",
                 "get-test-results",
                 "--digest",
                 digest,

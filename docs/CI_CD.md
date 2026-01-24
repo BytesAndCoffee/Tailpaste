@@ -773,6 +773,69 @@ Self-hosted runners need:
 - [ ] Automated database migrations
 - [ ] Load testing in CI
 
+## Artifact Management System
+
+### Overview
+
+The CI/CD system implements immutable artifact management with digest-based references for secure, reproducible deployments.
+
+### Requirements Addressed
+
+- **Immutable Artifacts**: Build Docker image exactly once when code passes CI
+- **Content Addressable**: Assign SHA256 digest identifier to all artifacts
+- **Centralized Registry**: Store artifacts in GitHub Container Registry (GHCR)
+- **Digest-Based References**: Reference artifacts by digest for testing and deployment
+- **No Rebuilds**: Prevent rebuilding the same artifact in production
+- **Test-First**: Execute unit tests before artifact creation
+
+### Artifact Reference Format
+
+```
+Registry: ghcr.io
+Repository: {github.repository}
+Digest: sha256:{64-character-hex-string}
+Full Reference: ghcr.io/{github.repository}@sha256:{digest}
+```
+
+### Workflow Integration
+
+**Build Process Flow:**
+1. Code Push/PR → Triggers CI workflow
+2. Lint and Test → Runs quality checks
+3. Artifact Check → Checks if artifact exists for commit
+4. Conditional Build → Only builds if artifact doesn't exist
+5. Registry Push → Pushes to GHCR with digest-based reference
+6. Metadata Recording → Records artifact metadata
+7. Validation → Validates artifact exists in registry
+
+**Integration Points:**
+- Integration Tests use artifact digests from CI workflow
+- Deployment references tested artifacts by digest
+- Health Monitoring tracks deployed artifact references
+- Rollback uses previous artifact digests for restoration
+
+### Artifact Manager
+
+Located at [scripts/ci/artifact_manager.py](../scripts/ci/artifact_manager.py)
+
+**Commands:**
+- `check-existing` - Check if artifact exists for commit
+- `record-artifact` - Record new artifact metadata
+- `get-digest` - Get digest for specific commit
+- `validate-digest` - Validate artifact digest and registry existence
+- `generate-hash` - Generate content hash for files
+- `record-test-result` - Record test results for artifact
+- `get-test-results` - Get test results for artifact
+- `update-status` - Update artifact status
+- `get-status` - Get artifact status
+
+### Security Considerations
+
+- **Immutable References**: Digest-based references prevent tampering
+- **Registry Authentication**: Uses GitHub token for secure registry access
+- **Artifact Validation**: Validates artifact existence before use
+- **No Credential Exposure**: Uses GitHub's built-in authentication
+
 ---
 
-**Last Updated**: January 20, 2026 | **Version**: 1.0.0
+**Last Updated**: January 23, 2026 | **Version**: 2.0.0

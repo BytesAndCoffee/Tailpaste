@@ -198,7 +198,7 @@ jobs:
           
           # Record recovery attempt start
           if [ -n "$DEPLOYED_DIGEST" ]; then
-            python scripts/artifact_manager.py record-test-result \
+            python scripts/ci/artifact_manager.py record-test-result \
               --digest "$DEPLOYED_DIGEST" \
               --test-type "recovery_attempt" \
               --status "pending" \
@@ -365,7 +365,7 @@ jobs:
           
           # Record recovery actions completion
           if [ -n "$DEPLOYED_DIGEST" ]; then
-            python scripts/artifact_manager.py record-test-result \
+            python scripts/ci/artifact_manager.py record-test-result \
               --digest "$DEPLOYED_DIGEST" \
               --test-type "recovery_actions" \
               --status "completed" \
@@ -388,7 +388,7 @@ jobs:
           sleep 30
           
           # Run health checks
-          if python3 scripts/health_check.py --json --export /tmp/post_recovery_health.json; then
+          if python3 scripts/health/health_check.py --json --export /tmp/post_recovery_health.json; then
             echo "✅ Post-recovery health check completed"
             POST_RECOVERY_SUCCESS=true
           else
@@ -398,8 +398,8 @@ jobs:
           
           # Parse results
           if [ -f "/tmp/post_recovery_health.json" ]; then
-            POST_RECOVERY_STATUS=$(python3 -c "import json; data=json.load(open('/tmp/post_recovery_health.json')); print(data['overall_status'])")
-            POST_RECOVERY_DETAILS=$(python3 -c "import json; data=json.load(open('/tmp/post_recovery_health.json')); print(data.get('health_details', 'Post-recovery health check completed'))")
+            POST_RECOVERY_STATUS=$(python3 scripts/health/parse_health_results.py /tmp/post_recovery_health.json overall_status)
+            POST_RECOVERY_DETAILS=$(python3 scripts/health/parse_health_results.py /tmp/post_recovery_health.json health_details)
             
             echo "Post-recovery health status: $POST_RECOVERY_STATUS"
             echo "Details: $POST_RECOVERY_DETAILS"
@@ -414,7 +414,7 @@ jobs:
           
           # Record post-recovery health check
           if [ -n "$DEPLOYED_DIGEST" ]; then
-            python scripts/artifact_manager.py record-test-result \
+            python scripts/ci/artifact_manager.py record-test-result \
               --digest "$DEPLOYED_DIGEST" \
               --test-type "post_recovery_health_check" \
               --status "$POST_RECOVERY_STATUS" \
@@ -485,7 +485,7 @@ jobs:
             
             # Record successful recovery
             if [ -n "$DEPLOYED_DIGEST" ]; then
-              python scripts/artifact_manager.py record-test-result \
+              python scripts/ci/artifact_manager.py record-test-result \
                 --digest "$DEPLOYED_DIGEST" \
                 --test-type "recovery" \
                 --status "successful" \
@@ -527,7 +527,7 @@ jobs:
             echo "📦 Found backup artifact as candidate: $BACKUP_DIGEST"
             
             # Verify the backup artifact is still deployable
-            if python scripts/artifact_manager.py validate-digest --digest "$BACKUP_DIGEST" --registry ${{ env.REGISTRY }} --repository ${{ env.IMAGE_NAME }}; then
+            if python scripts/ci/artifact_manager.py validate-digest --digest "$BACKUP_DIGEST" --registry ${{ env.REGISTRY }} --repository ${{ env.IMAGE_NAME }}; then
               CANDIDATE_DIGEST="$BACKUP_DIGEST"
               CANDIDATE_SOURCE="backup"
               echo "✅ Backup artifact is valid and available"
@@ -599,7 +599,7 @@ jobs:
           echo "Redeploying to artifact: $CANDIDATE_DIGEST (source: $CANDIDATE_SOURCE)"
           
           # Record redeployment attempt
-          python scripts/artifact_manager.py record-test-result \
+          python scripts/ci/artifact_manager.py record-test-result \
             --digest "$CANDIDATE_DIGEST" \
             --test-type "redeployment_attempt" \
             --status "pending" \
@@ -642,7 +642,7 @@ jobs:
             REDEPLOYMENT_TRIGGERED=false
             
             # Record redeployment failure
-            python scripts/artifact_manager.py record-test-result \
+            python scripts/ci/artifact_manager.py record-test-result \
               --digest "$CANDIDATE_DIGEST" \
               --test-type "redeployment_attempt" \
               --status "failed" \
@@ -673,7 +673,7 @@ jobs:
           
           # Record failure in artifact manager
           if [ -n "$DEPLOYED_DIGEST" ]; then
-            python scripts/artifact_manager.py record-test-result \
+            python scripts/ci/artifact_manager.py record-test-result \
               --digest "$DEPLOYED_DIGEST" \
               --test-type "recovery" \
               --status "failed" \

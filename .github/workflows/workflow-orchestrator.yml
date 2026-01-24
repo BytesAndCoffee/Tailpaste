@@ -444,7 +444,7 @@ jobs:
           
           if [ -f orchestration_report.json ]; then
             # Use workflow status monitor to analyze results
-            python scripts/workflow_status_monitor.py --repo ${{ github.repository }} --json > status_report.json 2>/dev/null || true
+            python scripts/workflows/workflow_status_monitor.py --repo ${{ github.repository }} --json > status_report.json 2>/dev/null || true
             
             # Simple grep-based counting for critical and warning issues
             CRITICAL_ISSUES=$(grep -c "CRITICAL:" orchestration_report.json 2>/dev/null || echo "0")
@@ -507,7 +507,7 @@ jobs:
               echo "🏥 Performing workflow health check..."
               
               # Check if any workflows are in unhealthy state
-              UNHEALTHY_WORKFLOWS=$(python scripts/orchestration_helper.py unhealthy-workflows)
+              UNHEALTHY_WORKFLOWS=$(python scripts/workflows/orchestration_helper.py unhealthy-workflows)
               
               if [ -n "$UNHEALTHY_WORKFLOWS" ]; then
                 echo "❌ Unhealthy workflows detected: $UNHEALTHY_WORKFLOWS"
@@ -535,7 +535,7 @@ jobs:
                 DEPLOYMENT_START=$(gh variable get DEPLOYMENT_STARTED_AT --repo ${{ github.repository }} 2>/dev/null || echo "")
                 if [ -n "$DEPLOYMENT_START" ]; then
                   # Check if deployment has been stuck for over 45 minutes
-                  STUCK_DURATION=$(python scripts/orchestration_helper.py stuck-duration "$DEPLOYMENT_START")
+                  STUCK_DURATION=$(python scripts/workflows/orchestration_helper.py stuck-duration "$DEPLOYMENT_START")
                   
                   if [ "$STUCK_DURATION" -gt 2700 ]; then  # 45 minutes
                     echo "🚨 Clearing stuck deployment lock (stuck for ${STUCK_DURATION}s)"
@@ -550,7 +550,7 @@ jobs:
                 RECOVERY_START=$(gh variable get RECOVERY_START_TIME --repo ${{ github.repository }} 2>/dev/null || echo "")
                 if [ -n "$RECOVERY_START" ]; then
                   # Check if recovery has been stuck for over 20 minutes
-                  STUCK_DURATION=$(python scripts/orchestration_helper.py stuck-duration "$RECOVERY_START")
+                  STUCK_DURATION=$(python scripts/workflows/orchestration_helper.py stuck-duration "$RECOVERY_START")
                   
                   if [ "$STUCK_DURATION" -gt 1200 ]; then  # 20 minutes
                     echo "🚨 Clearing stuck recovery session (stuck for ${STUCK_DURATION}s)"
@@ -574,7 +574,7 @@ jobs:
               echo "🔄 Performing state synchronization..."
               
               # Synchronize state across workflows using helper script
-              python scripts/orchestration_helper.py sync-state
+              python scripts/workflows/orchestration_helper.py sync-state
               ;;
               
             *)
@@ -591,7 +591,7 @@ jobs:
           echo "🚨 Critical workflow orchestration issues detected!"
           
           # Extract critical recommendations
-          CRITICAL_RECOMMENDATIONS=$(python scripts/orchestration_helper.py critical-recommendations)
+          CRITICAL_RECOMMENDATIONS=$(python scripts/workflows/orchestration_helper.py critical-recommendations)
           
           echo "Critical issues:"
           echo "$CRITICAL_RECOMMENDATIONS"
@@ -660,17 +660,17 @@ jobs:
           if [ -f orchestration_report.json ]; then
             echo "### Workflow Health Status" >> $GITHUB_STEP_SUMMARY
             
-            python scripts/orchestration_helper.py workflow-health-summary >> $GITHUB_STEP_SUMMARY
+            python scripts/workflows/orchestration_helper.py workflow-health-summary >> $GITHUB_STEP_SUMMARY
             
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "### System Consistency" >> $GITHUB_STEP_SUMMARY
             
-            python scripts/orchestration_helper.py consistency-summary >> $GITHUB_STEP_SUMMARY
+            python scripts/workflows/orchestration_helper.py consistency-summary >> $GITHUB_STEP_SUMMARY
             
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "### Recommendations" >> $GITHUB_STEP_SUMMARY
             
-            python scripts/orchestration_helper.py recommendations-summary >> $GITHUB_STEP_SUMMARY
+            python scripts/workflows/orchestration_helper.py recommendations-summary >> $GITHUB_STEP_SUMMARY
           fi
           
           echo "" >> $GITHUB_STEP_SUMMARY

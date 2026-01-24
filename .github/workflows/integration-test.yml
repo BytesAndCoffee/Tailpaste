@@ -32,58 +32,25 @@ jobs:
       - name: Get artifact digest from CI workflow
         id: get-artifact
         run: |
-          echo "🔍 Retrieving artifact digest from CI workflow..."
-          
-          # Get the CI workflow run that triggered this integration test
-          CI_RUN_ID="${{ github.event.workflow_run.id }}"
-          
-          # Download CI workflow artifacts to get the digest
-          gh run download $CI_RUN_ID --name coverage-reports --dir /tmp/ci-artifacts || true
-          
-          # Get artifact digest from artifact manager
-          COMMIT_SHA="${{ github.event.workflow_run.head_sha }}"
-          DIGEST=$(python scripts/artifact_manager.py get-digest --commit $COMMIT_SHA 2>/dev/null || echo "")
-          
-          if [ -z "$DIGEST" ]; then
-            echo "❌ No artifact digest found for commit $COMMIT_SHA"
-            echo "This indicates the CI workflow did not create an artifact (likely due to CI gating failure)"
-            exit 1
-          fi
-          
-          echo "✅ Found artifact digest: $DIGEST"
-          echo "digest=$DIGEST" >> $GITHUB_OUTPUT
-          
-          # Validate the digest format
-          python scripts/artifact_manager.py validate-digest \
-            --digest "$DIGEST" \
-            --registry ${{ env.REGISTRY }} \
-            --repository ${{ env.IMAGE_NAME }}
+          source .github/scripts/it-get-artifact.sh \
+            "${{ github.event.workflow_run.id }}" \
+            "${{ github.event.workflow_run.head_sha }}" \
+            "${{ env.REGISTRY }}" \
+            "${{ env.IMAGE_NAME }}" >> $GITHUB_OUTPUT
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Update artifact status to testing
         run: |
-          echo "📝 Marking artifact as under integration testing..."
-          python scripts/artifact_manager.py update-status \
-            --digest ${{ steps.get-artifact.outputs.digest }} \
-            --status testing \
-            --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          .github/scripts/integration-test/it-update-status.sh "${{ steps.get-artifact.outputs.digest }}"
 
       - name: Ensure iptables and ping are installed
         run: |
-          if ! command -v iptables > /dev/null; then
-            sudo apt-get update && sudo apt-get install -y iptables
-          fi
+          .github/scripts/integration-test/it-install-tools.sh
       
       - name: Check for elevation
         run: |
-          if [ "$EUID" -ne 0 ]; then
-            echo "❌ This job requires elevated privileges."
-            echo "Checking sudo access..."
-            echo "Elevated user: $(sudo whoami)"
-          fi
-          echo "✓ Running with elevated privileges."
-          sudo which iptables
+          .github/scripts/integration-test/it-check-elevation.sh
         
       - name: Connect to Tailscale
         uses: tailscale/github-action@v4
@@ -95,193 +62,47 @@ jobs:
 
       - name: Pull and run exact artifact for testing
         run: |
-          echo "🐳 Pulling exact artifact for integration testing..."
-          ARTIFACT_DIGEST="${{ steps.get-artifact.outputs.digest }}"
-          FULL_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${ARTIFACT_DIGEST}"
-          
-          echo "Pulling image: $FULL_IMAGE"
-          docker pull "$FULL_IMAGE"
-          
-          # Tag the image for easier reference in tests
-          docker tag "$FULL_IMAGE" tailpaste-integration-test:latest
-          
-          echo "✅ Artifact pulled and tagged for testing"
-          
-          # Verify we're using the exact digest
-          PULLED_DIGEST=$(docker inspect "$FULL_IMAGE" --format='{{index .RepoDigests 0}}' | cut -d'@' -f2)
-          if [ "$PULLED_DIGEST" != "$ARTIFACT_DIGEST" ]; then
-            echo "❌ Digest mismatch! Expected: $ARTIFACT_DIGEST, Got: $PULLED_DIGEST"
-            exit 1
-          fi
-          echo "✅ Digest verification passed"
+          .github/scripts/integration-test/it-pull-artifact.sh \
+            "${{ steps.get-artifact.outputs.digest }}" \
+            "${{ env.REGISTRY }}" \
+            "${{ env.IMAGE_NAME }}"
       
       - name: Wait for Tailpaste
         run: |
-          echo "⏳ Waiting for Tailpaste service to be reachable..."
-          for i in {1..90}; do
-            if curl -f -s -o /dev/null http://tailpaste:8080/; then
-              echo "Tailpaste is up"
-              exit 0
-            fi
-            sleep 1
-          done
-          echo "Tailpaste failed to start"
+          .github/scripts/integration-test/it-wait-service.sh
       
       - name: Run integration tests
         run: |
-          echo "🔍 Testing service availability..."
-          if ! curl -f -s -o /dev/null http://tailpaste:8080/; then
-            echo "❌ Service is not reachable"
-          fi
-          echo "✓ Service is reachable"
-          
-          echo "📝 Testing paste creation and retrieval..."
-          TEST_CONTENT="Integration Test - $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          PASTE_URL=$(curl -s -X POST -H "Content-Type: text/plain" -d "$TEST_CONTENT" http://tailpaste:8080/)
-          
-          if [ -z "$PASTE_URL" ]; then
-            echo "❌ Failed to create paste"
-            exit 1
-          fi
-          echo "✓ Created paste: $PASTE_URL"
-          
-          RETRIEVED=$(curl -s "$PASTE_URL")
-          if [[ "$RETRIEVED" == *"$TEST_CONTENT"* ]]; then
-            echo "✓ Paste content verified"
-          else
-            echo "❌ Paste content mismatch"
-            exit 1
-          fi
+          .github/scripts/integration-test/it-run-tests.sh
       
       - name: Test large paste handling
         run: |
-          echo "📦 Testing large paste (500KB)..."
-          dd if=/dev/urandom bs=1024 count=500 2>/dev/null | base64 > /tmp/large_test.txt
-          
-          PASTE_URL=$(curl -s -X POST -H "Content-Type: text/plain" --data-binary @/tmp/large_test.txt http://tailpaste:8080/)
-          
-          if [ -z "$PASTE_URL" ]; then
-            echo "❌ Failed to create large paste"
-            rm -f /tmp/large_test.txt
-            exit 1
-          fi
-          echo "✓ Created large paste: $PASTE_URL"
-          
-          curl -s -o /tmp/retrieved.txt "$PASTE_URL"
-          if [ -s /tmp/retrieved.txt ]; then
-            ORIGINAL_SIZE=$(wc -c < /tmp/large_test.txt)
-            RETRIEVED_SIZE=$(wc -c < /tmp/retrieved.txt)
-            echo "✓ Retrieved paste (Original: $ORIGINAL_SIZE bytes, Retrieved: $RETRIEVED_SIZE bytes)"
-          else
-            echo "❌ Failed to retrieve large paste"
-            exit 1
-          fi
-          
-          rm -f /tmp/large_test.txt /tmp/retrieved.txt
+          .github/scripts/integration-test/it-test-large-paste.sh
       
       - name: Test security and concurrent requests
         run: |
-          echo "⚡ Testing concurrent requests..."
-          for i in $(seq 1 10); do
-            (curl -s -X POST -H "Content-Type: text/plain" -d "Concurrent test $i" http://tailpaste:8080/ > /dev/null) &
-          done
-          wait
-          echo "✓ Concurrent requests completed"
-          
-          echo "🔒 Testing proxy header rejection..."
-          HEADERS=("X-Forwarded-For: 1.2.3.4" "X-Real-IP: 1.2.3.4" "X-Forwarded-Proto: https")
-          
-          for HEADER in "${HEADERS[@]}"; do
-            HTTP_CODE=$(curl -s -w "%{http_code}" -o /dev/null -X POST -H "Content-Type: text/plain" -H "$HEADER" -d "Should be rejected" https://paste.bytes.coffee/)
-            
-            if [ "$HTTP_CODE" = "403" ]; then
-              echo "✓ Correctly rejected request with: $HEADER"
-            else
-              echo "❌ Expected 403, got $HTTP_CODE for: $HEADER"
-              exit 1
-            fi
-          done
+          .github/scripts/integration-test/it-test-security.sh
       
       - name: Record integration test results
         id: test-results
         if: always()
         run: |
-          echo "📊 Recording integration test results..."
-          
-          TEST_STATUS="${{ job.status }}"
-          ARTIFACT_DIGEST="${{ steps.get-artifact.outputs.digest }}"
-          TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          
-          # Determine final test status
-          if [ "$TEST_STATUS" = "success" ]; then
-            FINAL_STATUS="passed"
-            echo "✅ Integration tests PASSED"
-          else
-            FINAL_STATUS="failed"
-            echo "❌ Integration tests FAILED"
-          fi
-          
-          echo "status=$FINAL_STATUS" >> $GITHUB_OUTPUT
-          
-          # Record test outcome in artifact manager
-          python scripts/artifact_manager.py record-test-result \
-            --digest "$ARTIFACT_DIGEST" \
-            --test-type "integration" \
-            --status "$FINAL_STATUS" \
-            --timestamp "$TIMESTAMP" \
-            --details "Integration tests completed with status: $FINAL_STATUS"
-          
-          echo "📝 Test results recorded for artifact: $ARTIFACT_DIGEST"
+          source .github/scripts/integration-test/it-record-results.sh \
+            "${{ job.status }}" \
+            "${{ steps.get-artifact.outputs.digest }}" >> $GITHUB_OUTPUT
 
       - name: Mark artifact as deployable or failed
         id: mark-deployable
         if: always()
         run: |
-          echo "🏷️ Updating artifact deployment status..."
-          
-          TEST_STATUS="${{ steps.test-results.outputs.status }}"
-          ARTIFACT_DIGEST="${{ steps.get-artifact.outputs.digest }}"
-          
-          if [ "$TEST_STATUS" = "passed" ]; then
-            # Mark artifact as deployable
-            python scripts/artifact_manager.py update-status \
-              --digest "$ARTIFACT_DIGEST" \
-              --status "deployable" \
-              --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            
-            echo "✅ Artifact marked as DEPLOYABLE"
-            echo "deployable=true" >> $GITHUB_OUTPUT
-          else
-            # Mark artifact as failed
-            python scripts/artifact_manager.py update-status \
-              --digest "$ARTIFACT_DIGEST" \
-              --status "failed" \
-              --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            
-            echo "❌ Artifact marked as FAILED - deployment blocked"
-            echo "deployable=false" >> $GITHUB_OUTPUT
-          fi
+          source .github/scripts/integration-test/it-mark-deployable.sh \
+            "${{ steps.test-results.outputs.status }}" \
+            "${{ steps.get-artifact.outputs.digest }}" >> $GITHUB_OUTPUT
 
       - name: Integration test summary
         if: always()
         run: |
-          echo "================================"
-          echo "Integration Test Summary"
-          echo "Artifact Digest: ${{ steps.get-artifact.outputs.digest }}"
-          echo "Test Status: ${{ steps.test-results.outputs.status }}"
-          echo "Deployable: ${{ steps.mark-deployable.outputs.deployable }}"
-          echo "Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          echo "================================"
-          
-          # Add to GitHub Step Summary
-          echo "## Integration Test Results" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Artifact Digest**: \`${{ steps.get-artifact.outputs.digest }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Test Status**: ${{ steps.test-results.outputs.status == 'passed' && '✅ PASSED' || '❌ FAILED' }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Deployable**: ${{ steps.mark-deployable.outputs.deployable == 'true' && '✅ YES' || '❌ NO' }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Timestamp**: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_STEP_SUMMARY
-          
-          if [ "${{ steps.test-results.outputs.status }}" = "failed" ]; then
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "⚠️ **Deployment Blocked**: Integration tests failed. The artifact will not be deployed." >> $GITHUB_STEP_SUMMARY
-          fi
+          .github/scripts/integration-test/it-generate-summary.sh \
+            "${{ steps.get-artifact.outputs.digest }}" \
+            "${{ steps.test-results.outputs.status }}" \
+            "${{ steps.mark-deployable.outputs.deployable }}"

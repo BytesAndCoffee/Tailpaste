@@ -39,23 +39,9 @@ jobs:
         env:
           TAILPASTE_URL: ${{ vars.TAILPASTE_URL }}
         run: |
-          echo "🏥 Running health check..."
-          echo "🛠️ Checking environment variables..."
-          echo "TAILPASTE_URL: $TAILPASTE_URL"
-          
-          # Run the health check script
-          python3 scripts/health_check.py --export /tmp/health_check_results.json
-          
-          # Store the exit code
+          .github/scripts/health-check/run-health-check.sh
           HEALTH_STATUS=$?
           echo "health_status=$HEALTH_STATUS" >> $GITHUB_OUTPUT
-          
-          if [ $HEALTH_STATUS -eq 0 ]; then
-            echo "✅ Health check passed"
-          else
-            echo "❌ Health check failed"
-          fi
-          
           exit $HEALTH_STATUS
       
       - name: Upload health check results
@@ -69,19 +55,7 @@ jobs:
       - name: Generate health check summary
         if: always()
         run: |
-          echo "## Health Check Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Status**: ${{ steps.health_check.outcome }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Timestamp**: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Run Number**: ${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          if [ -f /tmp/health_check_results.json ]; then
-            echo "### Detailed Results" >> $GITHUB_STEP_SUMMARY
-            echo "\`\`\`json" >> $GITHUB_STEP_SUMMARY
-            cat /tmp/health_check_results.json >> $GITHUB_STEP_SUMMARY
-            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          fi
+          .github/scripts/health-check/generate-health-summary.sh "${{ steps.health_check.outcome }}" "${{ github.run_number }}"
       
       - name: Trigger deployment on failure
         if: steps.health_check.outcome == 'failure' || steps.health_check.outcome == 'cancelled'
@@ -119,17 +93,4 @@ jobs:
       - name: Notify on failure
         if: steps.health_check.outcome == 'failure' || steps.health_check.outcome == 'cancelled'
         run: |
-          echo "## ⚠️ Health Check Failed" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "The service health check has failed with outcome: **${{ steps.health_check.outcome }}**" >> $GITHUB_STEP_SUMMARY
-          echo "The deploy workflow has been triggered to attempt recovery." >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Failure Details:**" >> $GITHUB_STEP_SUMMARY
-          echo "- Run Number: ${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
-          echo "- Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_STEP_SUMMARY
-          echo "- Run URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Next Steps:**" >> $GITHUB_STEP_SUMMARY
-          echo "1. Monitor the deploy workflow execution" >> $GITHUB_STEP_SUMMARY
-          echo "2. Check service logs for errors" >> $GITHUB_STEP_SUMMARY
-          echo "3. Verify service availability after deployment" >> $GITHUB_STEP_SUMMARY
+          .github/scripts/health-check/notify-health-failure.sh "${{ steps.health_check.outcome }}" "${{ github.run_number }}" "${{ github.repository }}" "${{ github.run_id }}"

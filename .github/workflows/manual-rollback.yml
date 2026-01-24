@@ -276,7 +276,7 @@ jobs:
               TARGET_DIGEST="${{ env.ARTIFACT_DIGEST }}"
               
               # Validate the specific digest exists in registry
-              if ! python scripts/artifact_manager.py validate-digest --digest "$TARGET_DIGEST" --registry ${{ env.REGISTRY }} --repository ${{ env.IMAGE_NAME }}; then
+              if ! python scripts/ci/artifact_manager.py validate-digest --digest "$TARGET_DIGEST" --registry ${{ env.REGISTRY }} --repository ${{ env.IMAGE_NAME }}; then
                 echo "❌ Specified artifact digest not found in registry: $TARGET_DIGEST"
                 exit 1
               fi

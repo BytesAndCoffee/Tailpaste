@@ -80,7 +80,7 @@ jobs:
           echo "🔍 Executing comprehensive health checks using enhanced health check script..."
           
           # Run the enhanced health check script with JSON output
-          if python3 scripts/health_check.py --json --export /tmp/health_results.json; then
+          if python3 scripts/health/health_check.py --json --export /tmp/health_results.json; then
             echo "✅ Health checks completed successfully"
             HEALTH_CHECK_SUCCESS=true
           else
@@ -90,13 +90,13 @@ jobs:
           
           # Parse results from the health check script
           if [ -f "/tmp/health_results.json" ]; then
-            OVERALL_HEALTH=$(python3 -c "import json; data=json.load(open('/tmp/health_results.json')); print(data['overall_status'])")
-            HEALTH_DETAILS=$(python3 -c "import json; data=json.load(open('/tmp/health_results.json')); print(data.get('health_details', 'Health check completed'))")
+            OVERALL_HEALTH=$(python3 scripts/health/parse_health_results.py /tmp/health_results.json overall_status)
+            HEALTH_DETAILS=$(python3 scripts/health/parse_health_results.py /tmp/health_results.json health_details)
             
             # Extract individual check results
-            SERVICE_AVAILABLE=$(python3 -c "import json; data=json.load(open('/tmp/health_results.json')); print(str(data['checks'].get('service', {}).get('status') == 'passed').lower())")
-            FUNCTIONALITY_OK=$(python3 -c "import json; data=json.load(open('/tmp/health_results.json')); print(str(data['checks'].get('functionality', {}).get('status') == 'passed').lower())")
-            CONTAINER_HEALTHY=$(python3 -c "import json; data=json.load(open('/tmp/health_results.json')); print(str(data['checks'].get('container', {}).get('status') == 'passed').lower())")
+            SERVICE_AVAILABLE=$(python3 scripts/health/parse_health_results.py /tmp/health_results.json service_available)
+            FUNCTIONALITY_OK=$(python3 scripts/health/parse_health_results.py /tmp/health_results.json functionality_ok)
+            CONTAINER_HEALTHY=$(python3 scripts/health/parse_health_results.py /tmp/health_results.json container_healthy)
             
             echo "Health check results:"
             echo "  Overall: $OVERALL_HEALTH"
@@ -128,21 +128,22 @@ jobs:
           
           OVERALL_HEALTH="${{ steps.health_checks.outputs.OVERALL_HEALTH }}"
           HEALTH_DETAILS="${{ steps.health_checks.outputs.HEALTH_DETAILS }}"
+          TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           
           # Record results in GitHub variables
           gh variable set LAST_HEALTH_CHECK_STATUS --body "$OVERALL_HEALTH" --repo ${{ github.repository }}
-          gh variable set LAST_HEALTH_CHECK_TIME --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }}
+          gh variable set LAST_HEALTH_CHECK_TIME --body "$TIMESTAMP" --repo ${{ github.repository }}
           gh variable set LAST_HEALTH_CHECK_SESSION --body "$MONITORING_SESSION_ID" --repo ${{ github.repository }}
           
           # Record in artifact manager if we have a deployed artifact
           if [ -n "$DEPLOYED_DIGEST" ]; then
             echo "Recording health check for deployed artifact: $DEPLOYED_DIGEST"
             
-            python scripts/artifact_manager.py record-test-result \
+            python scripts/ci/artifact_manager.py record-test-result \
               --digest "$DEPLOYED_DIGEST" \
               --test-type "health_check" \
               --status "$OVERALL_HEALTH" \
-              --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              --timestamp "$TIMESTAMP" \
               --details "Continuous health monitoring: $HEALTH_DETAILS"
           else
             echo "⚠️  No deployed artifact found - health check not recorded in artifact manager"
@@ -151,29 +152,12 @@ jobs:
           # Update health check history (keep last 10 results)
           HEALTH_HISTORY=$(gh variable get HEALTH_CHECK_HISTORY --repo ${{ github.repository }} 2>/dev/null || echo "[]")
           
-          UPDATED_HISTORY=$(python3 -c "
-import json
-import sys
-
-try:
-    history = json.loads('$HEALTH_HISTORY')
-except:
-    history = []
-
-# Add new result
-new_result = {
-    'timestamp': '$(date -u +%Y-%m-%dT%H:%M:%SZ)',
-    'status': '$OVERALL_HEALTH',
-    'session_id': '$MONITORING_SESSION_ID'
-}
-
-history.append(new_result)
-
-# Keep only last 10 results
-history = history[-10:]
-
-print(json.dumps(history, separators=(',', ':')))
-")
+          export HEALTH_HISTORY
+          export TIMESTAMP
+          export OVERALL_HEALTH
+          export MONITORING_SESSION_ID
+          
+          UPDATED_HISTORY=$(python3 scripts/health/update_health_history.py)
           
           gh variable set HEALTH_CHECK_HISTORY --body "$UPDATED_HISTORY" --repo ${{ github.repository }}
           
@@ -211,20 +195,8 @@ print(json.dumps(history, separators=(',', ':')))
             # Check if degraded state persists
             HEALTH_HISTORY=$(gh variable get HEALTH_CHECK_HISTORY --repo ${{ github.repository }} 2>/dev/null || echo "[]")
             
-            CONSECUTIVE_DEGRADED=$(python3 -c "
-import json
-try:
-    history = json.loads('$HEALTH_HISTORY')
-    consecutive = 0
-    for result in reversed(history):
-        if result['status'] in ['degraded', 'unhealthy']:
-            consecutive += 1
-        else:
-            break
-    print(consecutive)
-except:
-    print(0)
-")
+            export HEALTH_HISTORY
+            CONSECUTIVE_DEGRADED=$(python3 scripts/health/count_consecutive_degraded.py)
             
             echo "Consecutive degraded/unhealthy checks: $CONSECUTIVE_DEGRADED"
             

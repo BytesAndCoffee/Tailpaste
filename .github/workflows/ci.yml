@@ -266,7 +266,7 @@ jobs:
       - name: Check for existing artifact
         id: check-artifact
         run: |
-          python scripts/artifact_manager.py check-existing \
+          python scripts/ci/artifact_manager.py check-existing \
             --registry ${{ env.REGISTRY }} \
             --repository ${{ env.IMAGE_NAME }} \
             --commit ${{ github.sha }}
@@ -291,13 +291,13 @@ jobs:
         run: |
           if [ "${{ steps.check-artifact.outcome }}" = "success" ]; then
             echo "Using existing artifact digest"
-            DIGEST=$(python scripts/artifact_manager.py get-digest --commit ${{ github.sha }})
+            DIGEST=$(python scripts/ci/artifact_manager.py get-digest --commit ${{ github.sha }})
           else
             echo "Using newly built artifact digest"
             DIGEST="${{ steps.build.outputs.digest }}"
           fi
           echo "digest=$DIGEST" >> $GITHUB_OUTPUT
-          python scripts/artifact_manager.py record-artifact \
+          python scripts/ci/artifact_manager.py record-artifact \
             --digest "$DIGEST" \
             --commit ${{ github.sha }} \
             --registry ${{ env.REGISTRY }} \
@@ -305,7 +305,7 @@ jobs:
       
       - name: Validate artifact digest
         run: |
-          python scripts/artifact_manager.py validate-digest \
+          python scripts/ci/artifact_manager.py validate-digest \
             --digest ${{ steps.digest.outputs.digest }} \
             --registry ${{ env.REGISTRY }} \
             --repository ${{ env.IMAGE_NAME }}

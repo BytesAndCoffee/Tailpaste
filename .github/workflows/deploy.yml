@@ -434,7 +434,7 @@ jobs:
           COMMIT_SHA="${{ github.event.workflow_run.head_sha }}"
           
           # Get artifact digest for this commit
-          DIGEST=$(python scripts/artifact_manager.py get-digest --commit $COMMIT_SHA 2>/dev/null || echo "")
+          DIGEST=$(python scripts/ci/artifact_manager.py get-digest --commit $COMMIT_SHA 2>/dev/null || echo "")
           
           if [ -z "$DIGEST" ]; then
             echo "❌ No artifact found for commit $COMMIT_SHA"
@@ -445,13 +445,13 @@ jobs:
           echo "Found artifact: $DIGEST"
           
           # Validate digest format
-          if ! python scripts/artifact_manager.py validate-digest --digest "$DIGEST" --registry ${{ env.REGISTRY }} --repository ${{ env.IMAGE_NAME }}; then
+          if ! python scripts/ci/artifact_manager.py validate-digest --digest "$DIGEST" --registry ${{ env.REGISTRY }} --repository ${{ env.IMAGE_NAME }}; then
             echo "❌ Invalid or non-existent artifact digest: $DIGEST"
             exit 1
           fi
           
           # Check artifact status - must be deployable
-          STATUS=$(python scripts/artifact_manager.py get-status --digest "$DIGEST" 2>/dev/null || echo "")
+          STATUS=$(python scripts/ci/artifact_manager.py get-status --digest "$DIGEST" 2>/dev/null || echo "")
           
           if [ "$STATUS" != "deployable" ]; then
             echo "❌ Artifact is not deployable. Current status: $STATUS"
@@ -460,8 +460,8 @@ jobs:
           fi
           
           # Verify artifact has passed integration tests
-          TEST_RESULTS=$(python scripts/artifact_manager.py get-test-results --digest "$DIGEST" 2>/dev/null || echo "{}")
-          INTEGRATION_STATUS=$(echo "$TEST_RESULTS" | python -c "import sys, json; data=json.load(sys.stdin); print(data.get('integration', {}).get('status', 'unknown'))")
+          TEST_RESULTS=$(python scripts/ci/artifact_manager.py get-test-results --digest "$DIGEST" 2>/dev/null || echo "{}")
+          INTEGRATION_STATUS=$(echo "$TEST_RESULTS" | python3 .github/scripts/parsers/parse-integration-status.py 2>/dev/null || echo "unknown")
           
           if [ "$INTEGRATION_STATUS" != "passed" ]; then
             echo "❌ Artifact has not passed integration tests. Status: $INTEGRATION_STATUS"
@@ -481,13 +481,13 @@ jobs:
           MANUAL_REASON="${{ inputs.manual_reason }}"
           
           # Validate digest format
-          if ! python scripts/artifact_manager.py validate-digest --digest "$DIGEST" --registry ${{ env.REGISTRY }} --repository ${{ env.IMAGE_NAME }}; then
+          if ! python scripts/ci/artifact_manager.py validate-digest --digest "$DIGEST" --registry ${{ env.REGISTRY }} --repository ${{ env.IMAGE_NAME }}; then
             echo "❌ Invalid or non-existent artifact digest: $DIGEST"
             exit 1
           fi
           
           # Check artifact status - can be bypassed with manual override
-          STATUS=$(python scripts/artifact_manager.py get-status --digest "$DIGEST" 2>/dev/null || echo "")
+          STATUS=$(python scripts/ci/artifact_manager.py get-status --digest "$DIGEST" 2>/dev/null || echo "")
           
           if [ "$STATUS" != "deployable" ]; then
             if [ "$BYPASS_GATING" = "true" ] && [ -n "$MANUAL_REASON" ]; then
@@ -540,7 +540,7 @@ jobs:
           # Get the latest deployable artifact from artifact manager
           # This is a simplified approach - in a real system you might want more sophisticated logic
           LATEST_COMMIT=$(git rev-parse HEAD)
-          DIGEST=$(python scripts/artifact_manager.py get-digest --commit $LATEST_COMMIT 2>/dev/null || echo "")
+          DIGEST=$(python scripts/ci/artifact_manager.py get-digest --commit $LATEST_COMMIT 2>/dev/null || echo "")
           
           if [ -z "$DIGEST" ]; then
             echo "❌ No artifact found for latest commit $LATEST_COMMIT"
@@ -549,7 +549,7 @@ jobs:
           fi
           
           # Validate the artifact is deployable
-          STATUS=$(python scripts/artifact_manager.py get-status --digest "$DIGEST" 2>/dev/null || echo "")
+          STATUS=$(python scripts/ci/artifact_manager.py get-status --digest "$DIGEST" 2>/dev/null || echo "")
           
           if [ "$STATUS" != "deployable" ]; then
             echo "❌ Latest artifact is not deployable. Current status: $STATUS"
@@ -692,7 +692,7 @@ jobs:
             echo "✅ Digest-based rollback available"
             
             # Validate backup artifact exists and is accessible
-            if python scripts/artifact_manager.py validate-digest --digest "$BACKUP_DIGEST" --registry ${{ env.REGISTRY }} --repository ${{ env.IMAGE_NAME }}; then
+            if python scripts/ci/artifact_manager.py validate-digest --digest "$BACKUP_DIGEST" --registry ${{ env.REGISTRY }} --repository ${{ env.IMAGE_NAME }}; then
               echo "✅ Backup artifact validated in registry"
               echo "ARTIFACT_DIGEST=$BACKUP_DIGEST" >> $GITHUB_ENV
               ROLLBACK_METHOD="digest-based"
@@ -821,7 +821,7 @@ jobs:
             
             # Record in artifact manager if we have a digest
             if [ -n "$BACKUP_DIGEST" ]; then
-              python scripts/artifact_manager.py record-test-result \
+              python scripts/ci/artifact_manager.py record-test-result \
                 --digest "$BACKUP_DIGEST" \
                 --test-type "rollback" \
                 --status "failed" \
@@ -840,7 +840,7 @@ jobs:
             gh variable set DEPLOYMENT_TRIGGERED_BY --body "${{ github.actor }}" --repo ${{ github.repository }}
             
             # Record successful rollback in artifact manager
-            python scripts/artifact_manager.py record-test-result \
+            python scripts/ci/artifact_manager.py record-test-result \
               --digest "$BACKUP_DIGEST" \
               --test-type "rollback" \
               --status "completed" \
@@ -876,7 +876,7 @@ jobs:
           
           # Record verification start
           if [ -n "$ROLLBACK_TARGET_DIGEST" ]; then
-            python scripts/artifact_manager.py record-test-result \
+            python scripts/ci/artifact_manager.py record-test-result \
               --digest "$ROLLBACK_TARGET_DIGEST" \
               --test-type "rollback_verification" \
               --status "pending" \
@@ -984,7 +984,7 @@ jobs:
           
           # Record verification results
           if [ -n "$ROLLBACK_TARGET_DIGEST" ]; then
-            python scripts/artifact_manager.py record-test-result \
+            python scripts/ci/artifact_manager.py record-test-result \
               --digest "$ROLLBACK_TARGET_DIGEST" \
               --test-type "rollback_verification" \
               --status "$VERIFICATION_STATUS" \
@@ -1091,7 +1091,7 @@ jobs:
             echo "🔄 This was a successful redeployment triggered by recovery workflow"
             
             # Record successful redeployment
-            python scripts/artifact_manager.py record-test-result \
+            python scripts/ci/artifact_manager.py record-test-result \
               --digest "$ARTIFACT_DIGEST" \
               --test-type "redeployment" \
               --status "successful" \
@@ -1108,7 +1108,7 @@ jobs:
           fi
           
           # Record deployment in artifact manager
-          python scripts/artifact_manager.py record-test-result \
+          python scripts/ci/artifact_manager.py record-test-result \
             --digest "$ARTIFACT_DIGEST" \
             --test-type "deployment" \
             --status "deployed" \
@@ -1128,7 +1128,7 @@ jobs:
           
           # Record verification start
           if [ -n "${ARTIFACT_DIGEST}" ]; then
-            python scripts/artifact_manager.py record-test-result \
+            python scripts/ci/artifact_manager.py record-test-result \
               --digest "${ARTIFACT_DIGEST}" \
               --test-type "deployment_verification" \
               --status "pending" \
@@ -1136,131 +1136,9 @@ jobs:
               --details "Starting enhanced deployment verification"
           fi
           
-          ssh -o StrictHostKeyChecking=no michael@docker << 'EOF'
-            set -e
-            
-            echo "=== CONTAINER STATUS VERIFICATION ==="
-            
-            # Enhanced container running check
-            CONTAINER_NAME="tailpaste"
-            if ! docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | grep -q "$CONTAINER_NAME"; then
-              echo "❌ Container '$CONTAINER_NAME' is not running!"
-              echo "Available containers:"
-              docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
-              echo "Recent container logs:"
-              docker logs "$CONTAINER_NAME" --tail=50 2>/dev/null || echo "No logs available"
-              exit 1
-            fi
-            echo "✓ Container '$CONTAINER_NAME' is running"
-            
-            # Enhanced container health check
-            CONTAINER_STATUS=$(docker inspect --format='{{.State.Status}}' "$CONTAINER_NAME" 2>/dev/null || echo "unknown")
-            CONTAINER_HEALTH=$(docker inspect --format='{{.State.Health.Status}}' "$CONTAINER_NAME" 2>/dev/null || echo "none")
-            RESTART_COUNT=$(docker inspect --format='{{.RestartCount}}' "$CONTAINER_NAME" 2>/dev/null || echo "0")
-            
-            echo "Container Status: $CONTAINER_STATUS"
-            echo "Container Health: $CONTAINER_HEALTH"  
-            echo "Restart Count: $RESTART_COUNT"
-            
-            if [ "$CONTAINER_STATUS" != "running" ]; then
-              echo "❌ Container is not in running state: $CONTAINER_STATUS"
-              exit 1
-            fi
-            
-            if [ "$RESTART_COUNT" -gt "0" ]; then
-              echo "⚠️  Container has restarted $RESTART_COUNT times"
-            fi
-            
-            echo "=== RESOURCE UTILIZATION CHECK ==="
-            
-            # Check container resource usage
-            CONTAINER_STATS=$(docker stats "$CONTAINER_NAME" --no-stream --format "table {{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}\t{{.BlockIO}}")
-            echo "Container Resource Usage:"
-            echo "$CONTAINER_STATS"
-            
-            # Check image information
-            IMAGE_INFO=$(docker inspect "$CONTAINER_NAME" --format='{{.Config.Image}}')
-            IMAGE_SIZE=$(docker images "$IMAGE_INFO" --format "{{.Size}}" | head -n 1)
-            echo "Image: $IMAGE_INFO"
-            echo "Image Size: $IMAGE_SIZE"
-            
-            echo "=== NETWORK CONNECTIVITY CHECK ==="
-            
-            # Enhanced Tailscale connectivity check
-            TAILSCALE_IP=$(docker exec "$CONTAINER_NAME" tailscale ip -4 2>/dev/null || echo "N/A")
-            TAILSCALE_STATUS=$(docker exec "$CONTAINER_NAME" tailscale status --json 2>/dev/null | jq -r '.BackendState' 2>/dev/null || echo "unknown")
-            
-            echo "Tailscale IP: $TAILSCALE_IP"
-            echo "Tailscale Status: $TAILSCALE_STATUS"
-            
-            if [ "$TAILSCALE_IP" = "N/A" ] || [ "$TAILSCALE_STATUS" != "Running" ]; then
-              echo "⚠️  Tailscale connectivity issues detected"
-            else
-              echo "✓ Tailscale connectivity verified"
-            fi
-            
-            # Check port binding
-            PORT_BINDING=$(docker port "$CONTAINER_NAME" 8080 2>/dev/null || echo "none")
-            echo "Port 8080 binding: $PORT_BINDING"
-            
-            echo "=== APPLICATION LOG ANALYSIS ==="
-            
-            # Enhanced log analysis
-            RECENT_LOGS=$(docker logs "$CONTAINER_NAME" --tail=100 --since=5m 2>&1)
-            
-            # Count different types of log entries
-            ERROR_COUNT=$(echo "$RECENT_LOGS" | grep -i "error" | grep -v "ERROR_LOG" | wc -l || echo 0)
-            WARNING_COUNT=$(echo "$RECENT_LOGS" | grep -i "warning\|warn" | wc -l || echo 0)
-            STARTUP_MESSAGES=$(echo "$RECENT_LOGS" | grep -i "starting\|started\|listening\|ready" | wc -l || echo 0)
-            
-            echo "Recent log analysis (last 5 minutes):"
-            echo "- Errors: $ERROR_COUNT"
-            echo "- Warnings: $WARNING_COUNT"  
-            echo "- Startup messages: $STARTUP_MESSAGES"
-            
-            if [ "$ERROR_COUNT" -gt "5" ]; then
-              echo "❌ High error count detected ($ERROR_COUNT errors)"
-              echo "Recent errors:"
-              echo "$RECENT_LOGS" | grep -i "error" | grep -v "ERROR_LOG" | tail -5
-              exit 1
-            elif [ "$ERROR_COUNT" -gt "0" ]; then
-              echo "⚠️  Some errors detected ($ERROR_COUNT errors)"
-              echo "Recent errors:"
-              echo "$RECENT_LOGS" | grep -i "error" | grep -v "ERROR_LOG" | tail -3
-            else
-              echo "✓ No significant errors in recent logs"
-            fi
-            
-            echo "=== DEPLOYMENT SUMMARY ==="
-            
-            # Write enhanced summary data
-            cat > /tmp/deployment_summary.txt << SUMMARY
-### Enhanced Deployment Verification Results
-
-#### Container Status
-- **Container Name**: $CONTAINER_NAME
-- **Status**: $CONTAINER_STATUS
-- **Health**: $CONTAINER_HEALTH
-- **Restart Count**: $RESTART_COUNT
-- **Image**: $IMAGE_INFO
-- **Image Size**: $IMAGE_SIZE
-
-#### Network Connectivity  
-- **Tailscale IP**: $TAILSCALE_IP
-- **Tailscale Status**: $TAILSCALE_STATUS
-- **Port Binding**: $PORT_BINDING
-
-#### Application Health
-- **Recent Errors**: $ERROR_COUNT
-- **Recent Warnings**: $WARNING_COUNT
-- **Startup Messages**: $STARTUP_MESSAGES
-
-#### Resource Usage
-$CONTAINER_STATS
-SUMMARY
-            
-            echo "✅ Enhanced deployment verification completed successfully!"
-          EOF
+          # Transfer and run verification script on remote host
+          scp -o StrictHostKeyChecking=no .github/scripts/deployment/deploy-enhanced-verification.sh michael@docker:/tmp/
+          ssh -o StrictHostKeyChecking=no michael@docker "bash /tmp/deploy-enhanced-verification.sh"
           
           # Check if verification passed
           if [ $? -eq 0 ]; then
@@ -1280,7 +1158,7 @@ SUMMARY
           
           # Record verification results
           if [ -n "${ARTIFACT_DIGEST}" ]; then
-            python scripts/artifact_manager.py record-test-result \
+            python scripts/ci/artifact_manager.py record-test-result \
               --digest "${ARTIFACT_DIGEST}" \
               --test-type "deployment_verification" \
               --status "$VERIFICATION_STATUS" \
@@ -1318,7 +1196,7 @@ SUMMARY
             
             # Record health check start for rollback
             if [ -n "$ROLLBACK_TARGET_DIGEST" ]; then
-              python scripts/artifact_manager.py record-test-result \
+              python scripts/ci/artifact_manager.py record-test-result \
                 --digest "$ROLLBACK_TARGET_DIGEST" \
                 --test-type "rollback_health_check" \
                 --status "pending" \
@@ -1330,7 +1208,7 @@ SUMMARY
             
             # Record health check start for deployment
             if [ -n "${ARTIFACT_DIGEST}" ]; then
-              python scripts/artifact_manager.py record-test-result \
+              python scripts/ci/artifact_manager.py record-test-result \
                 --digest "${ARTIFACT_DIGEST}" \
                 --test-type "health_check" \
                 --status "pending" \
@@ -1381,7 +1259,7 @@ SUMMARY
                 TEST_TYPE=$([ "$IS_ROLLBACK" = "true" ] && echo "rollback_health_check" || echo "health_check")
                 
                 if [ -n "$TARGET_DIGEST" ]; then
-                  python scripts/artifact_manager.py record-test-result \
+                  python scripts/ci/artifact_manager.py record-test-result \
                     --digest "$TARGET_DIGEST" \
                     --test-type "$TEST_TYPE" \
                     --status "failed" \
@@ -1515,30 +1393,10 @@ SUMMARY
           fi
           
           # Create detailed health report
-          cat > /tmp/health_report.txt << HEALTH_REPORT
-### Enhanced Service Health Report $([ "$IS_ROLLBACK" = "true" ] && echo "(Rollback)" || echo "(Deployment)")
-
-#### Availability Test Results
-- **Max Retries**: $MAX_RETRIES
-- **Successful After**: $((RETRY_COUNT + 1)) attempts
-- **Total Wait Time**: ${TOTAL_WAIT_TIME}s
-- **Final HTTP Code**: $HTTP_CODE
-- **Average Response Time**: ${AVG_RESPONSE_TIME}ms
-
-#### Functionality Test Results
-- **Paste Creation**: $([ -n "$PASTE_RESPONSE" ] && echo "✅ Success" || echo "❌ Failed")
-- **Paste Creation Time**: ${PASTE_CREATE_TIME}ms
-- **Paste Retrieval**: $([ "$RETRIEVED_CONTENT" = "$TEST_CONTENT" ] && echo "✅ Success" || echo "⚠️ Warning")
-- **Paste Retrieval Time**: ${PASTE_RETRIEVE_TIME}ms
-- **Health Endpoint**: HTTP $HEALTH_ENDPOINT_RESPONSE
-- **Static Resources**: HTTP $STATIC_RESPONSE
-
-#### Overall Status
-- **Health Status**: $HEALTH_STATUS
-- **Details**: $HEALTH_DETAILS
-- **Test Timestamp**: $HEALTH_TIMESTAMP
-- **Test Type**: $([ "$IS_ROLLBACK" = "true" ] && echo "Rollback Health Check" || echo "Deployment Health Check")
-HEALTH_REPORT
+          export IS_ROLLBACK MAX_RETRIES RETRY_COUNT TOTAL_WAIT_TIME HTTP_CODE AVG_RESPONSE_TIME
+          export PASTE_RESPONSE PASTE_CREATE_TIME RETRIEVED_CONTENT TEST_CONTENT PASTE_RETRIEVE_TIME
+          export HEALTH_ENDPOINT_RESPONSE STATIC_RESPONSE HEALTH_STATUS HEALTH_DETAILS HEALTH_TIMESTAMP
+          .github/scripts/deployment/deploy-generate-health-report.sh
           
           # Append health report to GitHub summary
           cat /tmp/health_report.txt >> $GITHUB_STEP_SUMMARY
@@ -1548,7 +1406,7 @@ HEALTH_REPORT
           TEST_TYPE=$([ "$IS_ROLLBACK" = "true" ] && echo "rollback_health_check" || echo "health_check")
           
           if [ -n "$TARGET_DIGEST" ]; then
-            python scripts/artifact_manager.py record-test-result \
+            python scripts/ci/artifact_manager.py record-test-result \
               --digest "$TARGET_DIGEST" \
               --test-type "$TEST_TYPE" \
               --status "$HEALTH_STATUS" \
@@ -1559,7 +1417,7 @@ HEALTH_REPORT
             FUNCTIONALITY_STATUS=$([ -n "$PASTE_RESPONSE" ] && echo "passed" || echo "failed")
             FUNCTIONALITY_TEST_TYPE=$([ "$IS_ROLLBACK" = "true" ] && echo "rollback_functionality_test" || echo "functionality_test")
             
-            python scripts/artifact_manager.py record-test-result \
+            python scripts/ci/artifact_manager.py record-test-result \
               --digest "$TARGET_DIGEST" \
               --test-type "$FUNCTIONALITY_TEST_TYPE" \
               --status "$FUNCTIONALITY_STATUS" \
@@ -1739,86 +1597,26 @@ HEALTH_REPORT
             echo "### Verification Results" >> $GITHUB_STEP_SUMMARY
             
             # Get test results from artifact manager
-            TEST_RESULTS=$(python scripts/artifact_manager.py get-test-results --digest "$TARGET_DIGEST" 2>/dev/null || echo "{}")
+            TEST_RESULTS=$(python scripts/ci/artifact_manager.py get-test-results --digest "$TARGET_DIGEST" 2>/dev/null || echo "{}")
             
             if [ "${{ inputs.rollback }}" = "true" ]; then
               # Parse and display rollback verification results
-              ROLLBACK_VERIFICATION=$(echo "$TEST_RESULTS" | python -c "
-import sys, json
-try:
-    data = json.load(sys.stdin)
-    rv = data.get('rollback_verification', {})
-    print(f\"- **Rollback Verification**: {rv.get('status', 'unknown')}\")
-    if 'timestamp' in rv:
-        print(f\"- **Verification Time**: {rv['timestamp']}\")
-except:
-    print('- **Rollback Verification**: unknown')
-" 2>/dev/null || echo "- **Rollback Verification**: unknown")
+              ROLLBACK_VERIFICATION=$(echo "$TEST_RESULTS" | python3 .github/scripts/parsers/parse-rollback-verification.py 2>/dev/null || echo "- **Rollback Verification**: unknown")
               
-              ROLLBACK_HEALTH_CHECK=$(echo "$TEST_RESULTS" | python -c "
-import sys, json
-try:
-    data = json.load(sys.stdin)
-    rhc = data.get('rollback_health_check', {})
-    print(f\"- **Rollback Health Check**: {rhc.get('status', 'unknown')}\")
-    if 'timestamp' in rhc:
-        print(f\"- **Health Check Time**: {rhc['timestamp']}\")
-except:
-    print('- **Rollback Health Check**: unknown')
-" 2>/dev/null || echo "- **Rollback Health Check**: unknown")
+              ROLLBACK_HEALTH_CHECK=$(echo "$TEST_RESULTS" | python3 .github/scripts/parsers/parse-rollback-health.py 2>/dev/null || echo "- **Rollback Health Check**: unknown")
               
-              ROLLBACK_FUNCTIONALITY_TEST=$(echo "$TEST_RESULTS" | python -c "
-import sys, json
-try:
-    data = json.load(sys.stdin)
-    rft = data.get('rollback_functionality_test', {})
-    print(f\"- **Rollback Functionality Test**: {rft.get('status', 'unknown')}\")
-    if 'timestamp' in rft:
-        print(f\"- **Functionality Test Time**: {rft['timestamp']}\")
-except:
-    print('- **Rollback Functionality Test**: unknown')
-" 2>/dev/null || echo "- **Rollback Functionality Test**: unknown")
+              ROLLBACK_FUNCTIONALITY_TEST=$(echo "$TEST_RESULTS" | python3 .github/scripts/parsers/parse-rollback-functionality.py 2>/dev/null || echo "- **Rollback Functionality Test**: unknown")
               
               echo "$ROLLBACK_VERIFICATION" >> $GITHUB_STEP_SUMMARY
               echo "$ROLLBACK_HEALTH_CHECK" >> $GITHUB_STEP_SUMMARY
               echo "$ROLLBACK_FUNCTIONALITY_TEST" >> $GITHUB_STEP_SUMMARY
             else
               # Parse and display deployment verification results
-              DEPLOYMENT_VERIFICATION=$(echo "$TEST_RESULTS" | python -c "
-import sys, json
-try:
-    data = json.load(sys.stdin)
-    dv = data.get('deployment_verification', {})
-    print(f\"- **Deployment Verification**: {dv.get('status', 'unknown')}\")
-    if 'timestamp' in dv:
-        print(f\"- **Verification Time**: {dv['timestamp']}\")
-except:
-    print('- **Deployment Verification**: unknown')
-" 2>/dev/null || echo "- **Deployment Verification**: unknown")
+              DEPLOYMENT_VERIFICATION=$(echo "$TEST_RESULTS" | python3 .github/scripts/parsers/parse-deployment-verification.py 2>/dev/null || echo "- **Deployment Verification**: unknown")
               
-              HEALTH_CHECK=$(echo "$TEST_RESULTS" | python -c "
-import sys, json
-try:
-    data = json.load(sys.stdin)
-    hc = data.get('health_check', {})
-    print(f\"- **Health Check**: {hc.get('status', 'unknown')}\")
-    if 'timestamp' in hc:
-        print(f\"- **Health Check Time**: {hc['timestamp']}\")
-except:
-    print('- **Health Check**: unknown')
-" 2>/dev/null || echo "- **Health Check**: unknown")
+              HEALTH_CHECK=$(echo "$TEST_RESULTS" | python3 .github/scripts/parsers/parse-health-check.py 2>/dev/null || echo "- **Health Check**: unknown")
               
-              FUNCTIONALITY_TEST=$(echo "$TEST_RESULTS" | python -c "
-import sys, json
-try:
-    data = json.load(sys.stdin)
-    ft = data.get('functionality_test', {})
-    print(f\"- **Functionality Test**: {ft.get('status', 'unknown')}\")
-    if 'timestamp' in ft:
-        print(f\"- **Functionality Test Time**: {ft['timestamp']}\")
-except:
-    print('- **Functionality Test**: unknown')
-" 2>/dev/null || echo "- **Functionality Test**: unknown")
+              FUNCTIONALITY_TEST=$(echo "$TEST_RESULTS" | python3 .github/scripts/parsers/parse-functionality-test.py 2>/dev/null || echo "- **Functionality Test**: unknown")
               
               echo "$DEPLOYMENT_VERIFICATION" >> $GITHUB_STEP_SUMMARY
               echo "$HEALTH_CHECK" >> $GITHUB_STEP_SUMMARY
@@ -1928,7 +1726,7 @@ except:
             # Record in artifact manager if we have a target digest
             ROLLBACK_TARGET_DIGEST=$(gh variable get ROLLBACK_TARGET_DIGEST --repo ${{ github.repository }} 2>/dev/null || echo "")
             if [ -n "$ROLLBACK_TARGET_DIGEST" ]; then
-              python scripts/artifact_manager.py record-test-result \
+              python scripts/ci/artifact_manager.py record-test-result \
                 --digest "$ROLLBACK_TARGET_DIGEST" \
                 --test-type "rollback" \
                 --status "failed" \
@@ -1985,7 +1783,7 @@ except:
               echo "Manual intervention is now required for deployments"
               
               # Log circuit breaker trigger for deployments
-              python scripts/circuit_breaker.py --repo ${{ github.repository }} open --reason "deployment_failure_threshold_exceeded"
+              python scripts/ci/circuit_breaker.py --repo ${{ github.repository }} open --reason "deployment_failure_threshold_exceeded"
               
               echo "🚨 Circuit breaker opened due to repeated deployment failures"
             else
@@ -1994,7 +1792,7 @@ except:
             
             # Record failure in artifact manager if we have a digest
             if [ -n "${ARTIFACT_DIGEST}" ]; then
-              python scripts/artifact_manager.py record-test-result \
+              python scripts/ci/artifact_manager.py record-test-result \
                 --digest "${ARTIFACT_DIGEST}" \
                 --test-type "deployment" \
                 --status "failed" \
@@ -2080,7 +1878,7 @@ except:
               echo "1. 🔍 **Investigate root cause** of repeated deployment failures" >> $GITHUB_STEP_SUMMARY
               echo "2. 🛠️ **Fix underlying issues** manually" >> $GITHUB_STEP_SUMMARY
               echo "3. 🧪 **Test deployment** manually to verify fixes" >> $GITHUB_STEP_SUMMARY
-              echo "4. 🔄 **Reset circuit breaker** using: \`python scripts/circuit_breaker.py --repo ${{ github.repository }} close\`" >> $GITHUB_STEP_SUMMARY
+              echo "4. 🔄 **Reset circuit breaker** using: \`python scripts/ci/circuit_breaker.py --repo ${{ github.repository }} close\`" >> $GITHUB_STEP_SUMMARY
               echo "5. 🚀 **Resume automated deployments** after verification" >> $GITHUB_STEP_SUMMARY
             else
               case "$FAILURE_STAGE" in
