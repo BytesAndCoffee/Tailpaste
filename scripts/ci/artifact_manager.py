@@ -18,7 +18,8 @@ import os
 import re
 import subprocess
 import sys
-from datetime import datetime
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
@@ -104,12 +105,12 @@ class ArtifactManager:
             "commit": commit,
             "registry": registry,
             "repository": repository,
-            "created_at": datetime.utcnow().isoformat() + "Z",
+            "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "status": "created",
         }
 
         # Update metadata
-        data["metadata"]["last_updated"] = datetime.utcnow().isoformat() + "Z"
+        data["metadata"]["last_updated"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
         self.save_artifacts(data)
         print(f"Recorded artifact: {artifact_id} -> {digest}")
@@ -131,13 +132,36 @@ class ArtifactManager:
         if not self.validate_digest(digest):
             return False
 
-        try:
-            # Use docker manifest inspect to check if the image exists
-            cmd = ["docker", "manifest", "inspect", f"{registry}/{repository}@{digest}"]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-            return result.returncode == 0
-        except (subprocess.TimeoutExpired, subprocess.SubprocessError):
-            return False
+        import time
+        max_retries = 5
+        retry_delay = 2  # seconds
+        
+        for attempt in range(max_retries):
+            try:
+                # Use docker buildx imagetools inspect for better registry compatibility
+                cmd = ["docker", "buildx", "imagetools", "inspect", f"{registry}/{repository}@{digest}"]
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                
+                if result.returncode == 0:
+                    return True
+                    
+                # If not found and not last attempt, wait before retry
+                if attempt < max_retries - 1:
+                    print(f"Attempt {attempt + 1}/{max_retries} failed, retrying in {retry_delay}s...", file=sys.stderr)
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                    
+            except subprocess.TimeoutExpired:
+                if attempt < max_retries - 1:
+                    print(f"Timeout on attempt {attempt + 1}/{max_retries}, retrying...", file=sys.stderr)
+                    time.sleep(retry_delay)
+                    retry_delay *= 2
+                    
+            except subprocess.SubprocessError as e:
+                print(f"Subprocess error: {e}", file=sys.stderr)
+                return False
+                
+        return False
 
     def update_artifact_status(
         self, digest: str, status: str, timestamp: str = None
@@ -155,7 +179,7 @@ class ArtifactManager:
             if artifact_info.get("digest") == digest:
                 artifact_info["status"] = status
                 artifact_info["status_updated_at"] = (
-                    timestamp or datetime.utcnow().isoformat() + "Z"
+                    timestamp or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
                 )
                 artifact_found = True
                 print(f"Updated artifact {artifact_id} status to: {status}")
@@ -166,7 +190,7 @@ class ArtifactManager:
             return
 
         # Update metadata
-        data["metadata"]["last_updated"] = datetime.utcnow().isoformat() + "Z"
+        data["metadata"]["last_updated"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
         self.save_artifacts(data)
 
@@ -221,7 +245,7 @@ class ArtifactManager:
             return
 
         # Update metadata
-        data["metadata"]["last_updated"] = datetime.utcnow().isoformat() + "Z"
+        data["metadata"]["last_updated"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
         self.save_artifacts(data)
 
