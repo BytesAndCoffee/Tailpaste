@@ -71,7 +71,7 @@ jobs:
       - name: Export circuit breaker logs
         if: env.ACTION == 'export-logs' || github.event_name == 'schedule'
         run: |
-          .github/scripts/cb-export-logs.sh "${{ github.repository }}"
+          .github/scripts/circuit-breaker/cb-export-logs.sh "${{ github.repository }}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       

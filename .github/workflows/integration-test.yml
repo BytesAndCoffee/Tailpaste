@@ -32,7 +32,7 @@ jobs:
       - name: Get artifact digest from CI workflow
         id: get-artifact
         run: |
-          source .github/scripts/it-get-artifact.sh \
+          source .github/scripts/integration-test/it-get-artifact.sh \
             "${{ github.event.workflow_run.id }}" \
             "${{ github.event.workflow_run.head_sha }}" \
             "${{ env.REGISTRY }}" \
