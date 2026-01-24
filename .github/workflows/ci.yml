@@ -230,6 +230,13 @@ jobs:
             --registry ${{ env.REGISTRY }} \
             --repository ${{ env.IMAGE_NAME }}
       
+      - name: Upload artifact metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifact-metadata
+          path: .artifacts.json
+          retention-days: 7
+      
       - name: Update artifact summary
         run: |
           echo "## Docker Artifact Built" >> $GITHUB_STEP_SUMMARY
