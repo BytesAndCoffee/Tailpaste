@@ -285,12 +285,6 @@ jobs:
             type=sha,prefix={{branch}}-
             type=raw,value=latest,enable={{is_default_branch}}
       
-      - name: Install Python for artifact management
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y python3 python3-pip
-          python3 -m pip install --upgrade pip
-      
       - name: Check for existing artifact
         id: check-artifact
         run: |
