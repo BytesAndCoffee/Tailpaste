@@ -10,7 +10,7 @@ REPOSITORY=$1
 echo "🔍 Checking thresholds and auto-opening if needed..."
 
 # Use the enhanced circuit breaker script to check and auto-open
-if python scripts/circuit_breaker.py --repo "$REPOSITORY" check; then
+if python3 scripts/circuit_breaker.py --repo "$REPOSITORY" check; then
   echo "✅ Thresholds are within limits"
 else
   echo "🚫 Circuit breaker was automatically opened due to threshold violations"

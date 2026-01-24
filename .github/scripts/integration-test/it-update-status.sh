@@ -6,8 +6,8 @@ set -euo pipefail
 
 DIGEST=$1
 
-echo "📝 Marking artifact as under integration testing..."
-python scripts/artifact_manager.py update-status \
+echo "📝 Marking artifact as under integration testing..." >&2
+python3 scripts/artifact_manager.py update-status \
   --digest "$DIGEST" \
   --status testing \
   --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)"

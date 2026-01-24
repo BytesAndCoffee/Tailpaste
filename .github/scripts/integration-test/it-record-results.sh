@@ -9,25 +9,25 @@ TEST_STATUS=$1
 ARTIFACT_DIGEST=$2
 TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-echo "📊 Recording integration test results..."
+echo "📊 Recording integration test results..." >&2
 
 # Determine final test status
 if [ "$TEST_STATUS" = "success" ]; then
   FINAL_STATUS="passed"
-  echo "✅ Integration tests PASSED"
+  echo "✅ Integration tests PASSED" >&2
 else
   FINAL_STATUS="failed"
-  echo "❌ Integration tests FAILED"
+  echo "❌ Integration tests FAILED" >&2
 fi
 
-echo "FINAL_STATUS=$FINAL_STATUS"
+echo "status=$FINAL_STATUS"
 
 # Record test outcome in artifact manager
-python scripts/artifact_manager.py record-test-result \
+python3 scripts/artifact_manager.py record-test-result \
   --digest "$ARTIFACT_DIGEST" \
   --test-type "integration" \
   --status "$FINAL_STATUS" \
   --timestamp "$TIMESTAMP" \
   --details "Integration tests completed with status: $FINAL_STATUS"
 
-echo "📝 Test results recorded for artifact: $ARTIFACT_DIGEST"
+echo "📝 Test results recorded for artifact: $ARTIFACT_DIGEST" >&2

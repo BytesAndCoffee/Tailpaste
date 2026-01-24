@@ -19,7 +19,7 @@ gh variable set LAST_HEALTH_CHECK_SESSION --body "$MONITORING_SESSION_ID" --repo
 if [ -n "$DEPLOYED_DIGEST" ]; then
   echo "Recording health check for deployed artifact: $DEPLOYED_DIGEST"
   
-  python scripts/ci/artifact_manager.py record-test-result \
+  python3 scripts/ci/artifact_manager.py record-test-result \
     --digest "$DEPLOYED_DIGEST" \
     --test-type "health_check" \
     --status "$OVERALL_HEALTH" \

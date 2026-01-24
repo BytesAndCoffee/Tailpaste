@@ -10,14 +10,14 @@ REPOSITORY=$1
 echo "🔍 Checking comprehensive circuit breaker status..."
 
 # Use the enhanced circuit breaker script
-python scripts/circuit_breaker.py --repo "$REPOSITORY" status --json > /tmp/cb_status.json
+python3 scripts/circuit_breaker.py --repo "$REPOSITORY" status --json > /tmp/cb_status.json
 
 # Parse status
-CB_STATUS=$(python -c "import json; data=json.load(open('/tmp/cb_status.json')); print(data['status'])")
-RECOVERY_FAILURES=$(python -c "import json; data=json.load(open('/tmp/cb_status.json')); print(data['recovery_failure_count'])")
-DEPLOYMENT_FAILURES=$(python -c "import json; data=json.load(open('/tmp/cb_status.json')); print(data['deployment_failure_count'])")
-RECOVERY_THRESHOLD=$(python -c "import json; data=json.load(open('/tmp/cb_status.json')); print(data['recovery_threshold'])")
-DEPLOYMENT_THRESHOLD=$(python -c "import json; data=json.load(open('/tmp/cb_status.json')); print(data['deployment_threshold'])")
+CB_STATUS=$(python3 -c "import json; data=json.load(open('/tmp/cb_status.json')); print(data['status'])")
+RECOVERY_FAILURES=$(python3 -c "import json; data=json.load(open('/tmp/cb_status.json')); print(data['recovery_failure_count'])")
+DEPLOYMENT_FAILURES=$(python3 -c "import json; data=json.load(open('/tmp/cb_status.json')); print(data['deployment_failure_count'])")
+RECOVERY_THRESHOLD=$(python3 -c "import json; data=json.load(open('/tmp/cb_status.json')); print(data['recovery_threshold'])")
+DEPLOYMENT_THRESHOLD=$(python3 -c "import json; data=json.load(open('/tmp/cb_status.json')); print(data['deployment_threshold'])")
 
 echo "Circuit Breaker Status: $CB_STATUS"
 echo "Recovery Failures: $RECOVERY_FAILURES / $RECOVERY_THRESHOLD"

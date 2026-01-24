@@ -10,15 +10,15 @@ REPOSITORY=$1
 echo "📋 Exporting circuit breaker logs and status..."
 
 # Export comprehensive status
-python scripts/circuit_breaker.py --repo "$REPOSITORY" status --export /tmp/circuit_breaker_export.json
+python3 scripts/circuit_breaker.py --repo "$REPOSITORY" status --export /tmp/circuit_breaker_export.json
 
 # Show event log
 echo "📝 Recent Circuit Breaker Events:"
-python scripts/circuit_breaker.py --repo "$REPOSITORY" events
+python3 scripts/circuit_breaker.py --repo "$REPOSITORY" events
 
 # Show recovery history
 echo "🔄 Recovery History:"
-python scripts/circuit_breaker.py --repo "$REPOSITORY" history
+python3 scripts/circuit_breaker.py --repo "$REPOSITORY" history
 
 # Upload export as artifact
 echo "📤 Uploading circuit breaker export as artifact..."

@@ -27,7 +27,7 @@ case "$ROLLBACK_TARGET" in
     TARGET_DIGEST="$ARTIFACT_DIGEST"
     
     # Validate the specific digest exists in registry
-    if ! python scripts/ci/artifact_manager.py validate-digest --digest "$TARGET_DIGEST" --registry "$REGISTRY" --repository "$IMAGE_NAME"; then
+    if ! python3 scripts/ci/artifact_manager.py validate-digest --digest "$TARGET_DIGEST" --registry "$REGISTRY" --repository "$IMAGE_NAME"; then
       echo "❌ Specified artifact digest not found in registry: $TARGET_DIGEST"
       exit 1
     fi
