@@ -8,6 +8,7 @@ import logging
 import os
 import sys
 from pathlib import Path
+from types import ModuleType
 from typing import Optional
 from typing import TypedDict
 
@@ -15,6 +16,7 @@ from typing import TypedDict
 logger = logging.getLogger(__name__)
 
 # Handle tomllib/tomli for Python 3.11+ vs earlier versions
+tomllib: ModuleType | None
 if sys.version_info >= (3, 11):
     import tomllib
 else:
