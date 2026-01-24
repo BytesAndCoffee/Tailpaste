@@ -242,35 +242,18 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       
-      - name: Setup Tailscale
-        uses: tailscale/github-action@v2
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v4
         with:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:ci
+          ping: docker.tailfa875.ts.net
       
-      - name: Configure Remote Docker Context
+      - name: Set up Docker context
         run: |
-          # Wait for Tailscale to be fully connected
-          until tailscale status --json | jq -e '.BackendState == "Running"' > /dev/null 2>&1; do
-            echo "Waiting for Tailscale connection..."
-            sleep 2
-          done
-          
-          # Find your Docker host on Tailscale
-          DOCKER_HOST=$(tailscale status --json | jq -r '.Peer[] | select(.HostName=="docker") | .DNSName' | head -n1)
-          
-          if [ -z "$DOCKER_HOST" ]; then
-            echo "❌ Could not find Docker host on Tailscale"
-            exit 1
-          fi
-          
-          echo "✅ Found Docker host: $DOCKER_HOST"
-          
-          # Create Docker context for remote host
-          docker context create remote-build --docker "host=ssh://root@${DOCKER_HOST}"
+          docker context create remote-build --docker "host=tcp://docker:2376" || true
           docker context use remote-build
-          docker info
       
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
