@@ -26,7 +26,9 @@ class HealthChecker:
         self.errors: List[str] = []
         self.warnings: List[str] = []
         self.metrics: Dict[str, Any] = {}
-        self.session_id = f"health-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
+        self.session_id = (
+            f"health-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
+        )
 
     def _load_config(self, config_path: Optional[str]) -> dict:
         """Load configuration from file or use defaults"""
@@ -60,7 +62,9 @@ class HealthChecker:
         for attempt in range(1, max_attempts + 1):
             try:
                 req = Request(self.config["service_url"])
-                req.add_header("User-Agent", f"HealthChecker/2.0 (session:{self.session_id})")
+                req.add_header(
+                    "User-Agent", f"HealthChecker/2.0 (session:{self.session_id})"
+                )
 
                 start_time = time.time()
                 with urlopen(req, timeout=self.config["response_timeout"]) as response:
@@ -73,22 +77,30 @@ class HealthChecker:
 
                     if status_code == 200:
                         avg_response_time = sum(response_times) // len(response_times)
-                        print(f"  ✅ Service is available (attempt {attempt}/{max_attempts}, response time: {response_time_ms}ms)")
+                        print(
+                            f"  ✅ Service is available (attempt {attempt}/{max_attempts}, response time: {response_time_ms}ms)"
+                        )
 
                         # Store metrics
-                        self.metrics.update({
-                            "avg_response_time_ms": avg_response_time,
-                            "response_times_ms": response_times,
-                            "http_codes": http_codes,
-                            "attempts_needed": attempt
-                        })
+                        self.metrics.update(
+                            {
+                                "avg_response_time_ms": avg_response_time,
+                                "response_times_ms": response_times,
+                                "http_codes": http_codes,
+                                "attempts_needed": attempt,
+                            }
+                        )
 
                         if avg_response_time > self.config["max_response_time_ms"]:
-                            self.warnings.append(f"Slow response time: {avg_response_time}ms")
+                            self.warnings.append(
+                                f"Slow response time: {avg_response_time}ms"
+                            )
 
                         return True
                     else:
-                        self.errors.append(f"Unexpected status code on attempt {attempt}: {status_code}")
+                        self.errors.append(
+                            f"Unexpected status code on attempt {attempt}: {status_code}"
+                        )
                         if attempt < max_attempts:
                             time.sleep(1)  # Brief delay before retry
 
@@ -96,7 +108,9 @@ class HealthChecker:
                 response_times.append(0)
                 http_codes.append(0)
                 if attempt == max_attempts:
-                    self.errors.append(f"Service unavailable after {max_attempts} attempts: {e}")
+                    self.errors.append(
+                        f"Service unavailable after {max_attempts} attempts: {e}"
+                    )
                     print(f"  ❌ Service is not available: {e}")
                 else:
                     print(f"  ⏳ Attempt {attempt}/{max_attempts} failed, retrying...")
@@ -105,18 +119,22 @@ class HealthChecker:
                 response_times.append(0)
                 http_codes.append(0)
                 if attempt == max_attempts:
-                    self.errors.append(f"Health check error after {max_attempts} attempts: {e}")
+                    self.errors.append(
+                        f"Health check error after {max_attempts} attempts: {e}"
+                    )
                     print(f"  ❌ Error during health check: {e}")
                 else:
                     time.sleep(1)
 
         # Store failure metrics
-        self.metrics.update({
-            "response_times_ms": response_times,
-            "http_codes": http_codes,
-            "attempts_needed": max_attempts,
-            "all_attempts_failed": True
-        })
+        self.metrics.update(
+            {
+                "response_times_ms": response_times,
+                "http_codes": http_codes,
+                "attempts_needed": max_attempts,
+                "all_attempts_failed": True,
+            }
+        )
 
         return False
 
@@ -131,48 +149,61 @@ class HealthChecker:
         try:
             # Test paste creation
             test_content = f"Health check test - {datetime.now(timezone.utc).isoformat()} - {os.urandom(4).hex()}"
-            
+
             create_req = Request(
                 self.config["service_url"],
-                data=test_content.encode('utf-8'),
+                data=test_content.encode("utf-8"),
                 headers={
-                    'Content-Type': 'text/plain',
-                    'User-Agent': f'HealthChecker/2.0 (session:{self.session_id})'
-                }
+                    "Content-Type": "text/plain",
+                    "User-Agent": f"HealthChecker/2.0 (session:{self.session_id})",
+                },
             )
-            create_req.get_method = lambda: 'POST'
+            create_req.get_method = lambda: "POST"
 
             start_time = time.time()
-            with urlopen(create_req, timeout=self.config["response_timeout"]) as response:
+            with urlopen(
+                create_req, timeout=self.config["response_timeout"]
+            ) as response:
                 create_time_ms = int((time.time() - start_time) * 1000)
-                paste_response = response.read().decode('utf-8').strip()
+                paste_response = response.read().decode("utf-8").strip()
 
                 if paste_response:
                     print(f"  ✅ Paste creation successful ({create_time_ms}ms)")
-                    
+
                     # Store metrics
                     self.metrics["paste_create_time_ms"] = create_time_ms
-                    
+
                     if create_time_ms > self.config["max_paste_create_time_ms"]:
                         self.warnings.append(f"Slow paste creation: {create_time_ms}ms")
 
                     # Test paste retrieval
-                    paste_id = paste_response.split('/')[-1] if '/' in paste_response else paste_response
-                    
+                    paste_id = (
+                        paste_response.split("/")[-1]
+                        if "/" in paste_response
+                        else paste_response
+                    )
+
                     if paste_id and paste_id != paste_response:
                         retrieve_url = f"{self.config['service_url']}/{paste_id}"
                         retrieve_req = Request(retrieve_url)
-                        retrieve_req.add_header("User-Agent", f"HealthChecker/2.0 (session:{self.session_id})")
+                        retrieve_req.add_header(
+                            "User-Agent",
+                            f"HealthChecker/2.0 (session:{self.session_id})",
+                        )
 
                         start_time = time.time()
-                        with urlopen(retrieve_req, timeout=self.config["response_timeout"]) as response:
+                        with urlopen(
+                            retrieve_req, timeout=self.config["response_timeout"]
+                        ) as response:
                             retrieve_time_ms = int((time.time() - start_time) * 1000)
-                            retrieved_content = response.read().decode('utf-8')
+                            retrieved_content = response.read().decode("utf-8")
 
                             self.metrics["paste_retrieve_time_ms"] = retrieve_time_ms
 
                             if retrieved_content == test_content:
-                                print(f"  ✅ Paste retrieval successful ({retrieve_time_ms}ms)")
+                                print(
+                                    f"  ✅ Paste retrieval successful ({retrieve_time_ms}ms)"
+                                )
                                 return True
                             else:
                                 self.errors.append("Paste retrieval content mismatch")
@@ -204,10 +235,17 @@ class HealthChecker:
         try:
             # Check if container is running
             result = subprocess.run(
-                ["docker", "ps", "--format", "{{.Names}}", "--filter", f"name={container_name}"],
+                [
+                    "docker",
+                    "ps",
+                    "--format",
+                    "{{.Names}}",
+                    "--filter",
+                    f"name={container_name}",
+                ],
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=10,
             )
 
             if result.returncode != 0:
@@ -215,7 +253,7 @@ class HealthChecker:
                 print("  ⚠️  Could not check container status")
                 return True
 
-            running_containers = result.stdout.strip().split('\n')
+            running_containers = result.stdout.strip().split("\n")
             if container_name not in running_containers:
                 self.errors.append(f"Container '{container_name}' is not running")
                 print(f"  ❌ Container '{container_name}' is not running")
@@ -225,56 +263,78 @@ class HealthChecker:
 
             # Get container details
             inspect_result = subprocess.run(
-                ["docker", "inspect", container_name, "--format", 
-                 "{{.State.Status}},{{.State.Health.Status}},{{.RestartCount}}"],
+                [
+                    "docker",
+                    "inspect",
+                    container_name,
+                    "--format",
+                    "{{.State.Status}},{{.State.Health.Status}},{{.RestartCount}}",
+                ],
                 capture_output=True,
                 text=True,
-                timeout=5
+                timeout=5,
             )
 
             if inspect_result.returncode == 0:
-                status_parts = inspect_result.stdout.strip().split(',')
-                container_status = status_parts[0] if len(status_parts) > 0 else "unknown"
+                status_parts = inspect_result.stdout.strip().split(",")
+                container_status = (
+                    status_parts[0] if len(status_parts) > 0 else "unknown"
+                )
                 health_status = status_parts[1] if len(status_parts) > 1 else "none"
-                restart_count = int(status_parts[2]) if len(status_parts) > 2 and status_parts[2].isdigit() else 0
+                restart_count = (
+                    int(status_parts[2])
+                    if len(status_parts) > 2 and status_parts[2].isdigit()
+                    else 0
+                )
 
-                print(f"  📊 Status: {container_status}, Health: {health_status}, Restarts: {restart_count}")
+                print(
+                    f"  📊 Status: {container_status}, Health: {health_status}, Restarts: {restart_count}"
+                )
 
                 # Store metrics
-                self.metrics.update({
-                    "container_status": container_status,
-                    "container_health": health_status,
-                    "restart_count": restart_count
-                })
+                self.metrics.update(
+                    {
+                        "container_status": container_status,
+                        "container_health": health_status,
+                        "restart_count": restart_count,
+                    }
+                )
 
                 if restart_count > 0:
-                    self.warnings.append(f"Container has restarted {restart_count} times")
+                    self.warnings.append(
+                        f"Container has restarted {restart_count} times"
+                    )
 
                 if container_status != "running":
-                    self.errors.append(f"Container status is '{container_status}', expected 'running'")
+                    self.errors.append(
+                        f"Container status is '{container_status}', expected 'running'"
+                    )
                     return False
 
             # Get resource usage
             stats_result = subprocess.run(
-                ["docker", "stats", container_name, "--no-stream", "--format", 
-                 "{{.CPUPerc}},{{.MemUsage}}"],
+                [
+                    "docker",
+                    "stats",
+                    container_name,
+                    "--no-stream",
+                    "--format",
+                    "{{.CPUPerc}},{{.MemUsage}}",
+                ],
                 capture_output=True,
                 text=True,
-                timeout=5
+                timeout=5,
             )
 
             if stats_result.returncode == 0:
-                stats_parts = stats_result.stdout.strip().split(',')
+                stats_parts = stats_result.stdout.strip().split(",")
                 cpu_usage = stats_parts[0] if len(stats_parts) > 0 else "N/A"
                 mem_usage = stats_parts[1] if len(stats_parts) > 1 else "N/A"
 
                 print(f"  📈 CPU: {cpu_usage}, Memory: {mem_usage}")
 
                 # Store metrics
-                self.metrics.update({
-                    "cpu_usage": cpu_usage,
-                    "memory_usage": mem_usage
-                })
+                self.metrics.update({"cpu_usage": cpu_usage, "memory_usage": mem_usage})
 
             return True
 
@@ -533,16 +593,18 @@ class HealthChecker:
         """Get overall health status as string"""
         if not self.results:
             return "unknown"
-        
+
         failed_checks = [name for name, passed in self.results.items() if not passed]
-        
+
         if not failed_checks:
             return "healthy"
-        
+
         # Check if only non-critical checks failed
         critical_checks = {"service", "functionality", "container"}
-        critical_failures = [check for check in failed_checks if check in critical_checks]
-        
+        critical_failures = [
+            check for check in failed_checks if check in critical_checks
+        ]
+
         if critical_failures:
             return "unhealthy"
         else:
@@ -554,14 +616,14 @@ class HealthChecker:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "session_id": self.session_id,
             "overall_status": self.get_overall_status(),
-            "checks": {name: {"status": "passed" if passed else "failed"} for name, passed in self.results.items()},
+            "checks": {
+                name: {"status": "passed" if passed else "failed"}
+                for name, passed in self.results.items()
+            },
             "metrics": self.metrics,
             "error_count": len(self.errors),
             "warning_count": len(self.warnings),
-            "details": {
-                "errors": self.errors,
-                "warnings": self.warnings
-            }
+            "details": {"errors": self.errors, "warnings": self.warnings},
         }
 
 
@@ -573,7 +635,9 @@ def main():
     parser.add_argument("--export", help="Export results to JSON file", default=None)
     parser.add_argument("--silent", action="store_true", help="Only output summary")
     parser.add_argument("--json", action="store_true", help="Output results as JSON")
-    parser.add_argument("--summary", action="store_true", help="Output health summary for monitoring")
+    parser.add_argument(
+        "--summary", action="store_true", help="Output health summary for monitoring"
+    )
 
     args = parser.parse_args()
 

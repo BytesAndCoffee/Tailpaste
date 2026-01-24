@@ -4,17 +4,13 @@ Tests the HealthChecker class, specifically focusing on the _print_summary metho
 to ensure correct inclusion and formatting of configuration settings.
 """
 
-import io
 import sys
 from pathlib import Path
-from unittest.mock import patch
-
-import pytest
 
 # Add scripts directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts" / "health"))
 
-from health_check import HealthChecker
+from health_check import HealthChecker  # noqa: E402
 
 
 class TestHealthChecker:

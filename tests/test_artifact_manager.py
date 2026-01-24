@@ -391,9 +391,10 @@ class TestArtifactManagerIntegration(unittest.TestCase):
             text=True,
         )
         self.assertEqual(result.returncode, 0)
-        
+
         # Parse JSON output
         import json
+
         results = json.loads(result.stdout)
         self.assertIn("integration", results)
         self.assertEqual(results["integration"]["status"], "passed")
