@@ -10,6 +10,13 @@ ARTIFACT_DIGEST=$2
 
 echo "🏷️ Updating artifact deployment status..." >&2
 
+# Only update artifact manager if we have a valid digest
+if [ -z "$ARTIFACT_DIGEST" ]; then
+  echo "⚠️  No artifact digest available - skipping artifact status update" >&2
+  echo "deployable=false"
+  exit 0
+fi
+
 if [ "$TEST_STATUS" = "passed" ]; then
   # Mark artifact as deployable
   python3 scripts/ci/artifact_manager.py update-status \
