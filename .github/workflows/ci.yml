@@ -230,12 +230,22 @@ jobs:
             --registry ${{ env.REGISTRY }} \
             --repository ${{ env.IMAGE_NAME }}
       
+      - name: Debug - Check artifacts file
+        run: |
+          echo "Checking for .artifacts.json file..."
+          ls -la .artifacts.json || echo "File not found!"
+          if [ -f .artifacts.json ]; then
+            echo "File contents:"
+            cat .artifacts.json
+          fi
+      
       - name: Upload artifact metadata
         uses: actions/upload-artifact@v4
         with:
           name: artifact-metadata
           path: .artifacts.json
           retention-days: 7
+        if: always()
       
       - name: Update artifact summary
         run: |
