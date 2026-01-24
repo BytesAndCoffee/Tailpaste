@@ -247,6 +247,7 @@ jobs:
           name: artifact-metadata
           path: ${{ github.workspace }}/.artifacts.json
           retention-days: 7
+          include-hidden-files: true
         if: always()
       
       - name: Update artifact summary
