@@ -79,7 +79,17 @@ jobs:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:ci
-          ping: tailpaste.tailfa875.ts.net
+          ping: docker.tailfa875.ts.net
+      
+      - name: Set up Docker context for remote Docker host
+        run: |
+          docker context create remote-build --docker "host=tcp://docker:2376" || true
+          docker context use remote-build
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          endpoint: remote-build
 
       - name: Pull and run exact artifact for testing
         run: |
