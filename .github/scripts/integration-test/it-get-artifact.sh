@@ -34,4 +34,4 @@ echo "DIGEST=$DIGEST"
 python3 scripts/ci/artifact_manager.py validate-digest \
   --digest "$DIGEST" \
   --registry "$REGISTRY" \
-  --repository "$IMAGE_NAME"
+  --repository "$IMAGE_NAME" >&2

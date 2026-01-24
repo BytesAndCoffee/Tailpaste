@@ -29,7 +29,7 @@ if [ -n "$ARTIFACT_DIGEST" ]; then
     --test-type "integration" \
     --status "$FINAL_STATUS" \
     --timestamp "$TIMESTAMP" \
-    --details "Integration tests completed with status: $FINAL_STATUS"
+    --details "Integration tests completed with status: $FINAL_STATUS" >&2
   
   echo "📝 Test results recorded for artifact: $ARTIFACT_DIGEST" >&2
 else
