@@ -1,0 +1,135 @@
+name: Health Check
+
+on:
+  schedule:
+    # Run every hour at minute 0
+    - cron: '0 * * * *'
+  workflow_dispatch:
+    # Allow manual triggering for testing
+
+jobs:
+  health-check:
+    name: Service Health Check
+    runs-on:
+      - tailpaste-runners
+    
+    permissions:
+      contents: read
+      actions: write  # Required to trigger deploy workflow
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:health-check
+          ping: tailpaste.tailfa875.ts.net
+      
+      - name: Run health check
+        id: health_check
+        env:
+          TAILPASTE_URL: ${{ vars.TAILPASTE_URL }}
+        run: |
+          echo "🏥 Running health check..."
+          echo "🛠️ Checking environment variables..."
+          echo "TAILPASTE_URL: $TAILPASTE_URL"
+          
+          # Run the health check script
+          python3 scripts/health_check.py --export /tmp/health_check_results.json
+          
+          # Store the exit code
+          HEALTH_STATUS=$?
+          echo "health_status=$HEALTH_STATUS" >> $GITHUB_OUTPUT
+          
+          if [ $HEALTH_STATUS -eq 0 ]; then
+            echo "✅ Health check passed"
+          else
+            echo "❌ Health check failed"
+          fi
+          
+          exit $HEALTH_STATUS
+      
+      - name: Upload health check results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: health-check-results-${{ github.run_number }}
+          path: /tmp/health_check_results.json
+          retention-days: 30
+      
+      - name: Generate health check summary
+        if: always()
+        run: |
+          echo "## Health Check Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: ${{ steps.health_check.outcome }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Timestamp**: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Run Number**: ${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -f /tmp/health_check_results.json ]; then
+            echo "### Detailed Results" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`json" >> $GITHUB_STEP_SUMMARY
+            cat /tmp/health_check_results.json >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          fi
+      
+      - name: Trigger deployment on failure
+        if: steps.health_check.outcome == 'failure' || steps.health_check.outcome == 'cancelled'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const outcome = '${{ steps.health_check.outcome }}';
+            const runNumber = '${{ github.run_number }}';
+            const timestamp = new Date().toISOString();
+            const runUrl = `https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
+            
+            console.log('❌ Health check failed! Triggering deployment to recover service...');
+            console.log(`Failure Details:`);
+            console.log(`  - Outcome: ${outcome}`);
+            console.log(`  - Run Number: ${runNumber}`);
+            console.log(`  - Timestamp: ${timestamp}`);
+            console.log(`  - Run URL: ${runUrl}`);
+            
+            try {
+              const result = await github.rest.actions.createWorkflowDispatch({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: 'deploy.yml',
+                ref: 'main',
+              });
+              
+              console.log('✅ Deploy workflow triggered successfully');
+              core.notice(`Health check ${outcome}. Deploy workflow has been triggered to recover the service. Health check run: ${runUrl}`);
+            } catch (error) {
+              console.error('❌ Failed to trigger deploy workflow:', error);
+              core.setFailed(`Failed to trigger deploy workflow: ${error.message}`);
+            }
+      
+      - name: Notify on failure
+        if: steps.health_check.outcome == 'failure' || steps.health_check.outcome == 'cancelled'
+        run: |
+          echo "## ⚠️ Health Check Failed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The service health check has failed with outcome: **${{ steps.health_check.outcome }}**" >> $GITHUB_STEP_SUMMARY
+          echo "The deploy workflow has been triggered to attempt recovery." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Failure Details:**" >> $GITHUB_STEP_SUMMARY
+          echo "- Run Number: ${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_STEP_SUMMARY
+          echo "- Run URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Next Steps:**" >> $GITHUB_STEP_SUMMARY
+          echo "1. Monitor the deploy workflow execution" >> $GITHUB_STEP_SUMMARY
+          echo "2. Check service logs for errors" >> $GITHUB_STEP_SUMMARY
+          echo "3. Verify service availability after deployment" >> $GITHUB_STEP_SUMMARY
