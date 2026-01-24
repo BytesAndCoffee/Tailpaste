@@ -1,0 +1,507 @@
+name: Manual Rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      rollback_target:
+        description: 'Rollback target (latest-backup, specific-digest, or file-based)'
+        required: true
+        type: choice
+        options:
+          - 'latest-backup'
+          - 'specific-digest'
+          - 'file-based'
+        default: 'latest-backup'
+      artifact_digest:
+        description: 'Specific artifact digest (required if rollback_target is specific-digest)'
+        required: false
+        type: string
+      bypass_verification:
+        description: 'Bypass rollback verification (emergency use only)'
+        required: false
+        type: boolean
+        default: false
+      bypass_health_checks:
+        description: 'Bypass health checks (emergency use only)'
+        required: false
+        type: boolean
+        default: false
+      emergency_rollback:
+        description: 'Emergency rollback - bypass all safety checks'
+        required: false
+        type: boolean
+        default: false
+      rollback_reason:
+        description: 'Detailed reason for rollback (required)'
+        required: true
+        type: string
+      skip_backup:
+        description: 'Skip creating backup of current state'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  manual-rollback:
+    name: Execute Manual Rollback
+    runs-on:
+      - tailpaste-runners
+    
+    # Enhanced concurrency control for manual rollbacks
+    concurrency:
+      group: manual-rollback-${{ github.repository }}
+      cancel-in-progress: false
+    
+    steps:
+      - name: Log manual rollback initiation and validate inputs
+        run: |
+          echo "🔄 Manual rollback initiated - logging action details..."
+          
+          # Initialize manual rollback tracking
+          ROLLBACK_ACTOR="${{ github.actor }}"
+          ROLLBACK_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          ROLLBACK_REASON="${{ inputs.rollback_reason }}"
+          ROLLBACK_TARGET="${{ inputs.rollback_target }}"
+          ARTIFACT_DIGEST="${{ inputs.artifact_digest }}"
+          BYPASS_VERIFICATION="${{ inputs.bypass_verification }}"
+          BYPASS_HEALTH_CHECKS="${{ inputs.bypass_health_checks }}"
+          EMERGENCY_ROLLBACK="${{ inputs.emergency_rollback }}"
+          SKIP_BACKUP="${{ inputs.skip_backup }}"
+          
+          echo "=== MANUAL ROLLBACK DETAILS ==="
+          echo "Actor: $ROLLBACK_ACTOR"
+          echo "Timestamp: $ROLLBACK_TIMESTAMP"
+          echo "Reason: $ROLLBACK_REASON"
+          echo "Target: $ROLLBACK_TARGET"
+          echo "Artifact Digest: ${ARTIFACT_DIGEST:-'Auto-select'}"
+          echo "Bypass Verification: $BYPASS_VERIFICATION"
+          echo "Bypass Health Checks: $BYPASS_HEALTH_CHECKS"
+          echo "Emergency Rollback: $EMERGENCY_ROLLBACK"
+          echo "Skip Backup: $SKIP_BACKUP"
+          
+          # Validate rollback reason
+          if [ -z "$ROLLBACK_REASON" ] || [ "$ROLLBACK_REASON" = "null" ]; then
+            echo "❌ Rollback reason is required for all manual rollbacks"
+            echo "Please provide a clear reason for this rollback operation"
+            exit 1
+          fi
+          
+          if [ ${#ROLLBACK_REASON} -lt 10 ]; then
+            echo "❌ Rollback reason must be at least 10 characters"
+            echo "Please provide a detailed reason for this rollback operation"
+            exit 1
+          fi
+          
+          # Validate specific digest if provided
+          if [ "$ROLLBACK_TARGET" = "specific-digest" ]; then
+            if [ -z "$ARTIFACT_DIGEST" ] || [ "$ARTIFACT_DIGEST" = "null" ]; then
+              echo "❌ Artifact digest is required when rollback target is 'specific-digest'"
+              echo "Please provide a valid artifact digest"
+              exit 1
+            fi
+            
+            # Validate digest format
+            if ! echo "$ARTIFACT_DIGEST" | grep -qE "^sha256:[a-f0-9]{64}$"; then
+              echo "❌ Invalid artifact digest format: $ARTIFACT_DIGEST"
+              echo "Expected format: sha256:64-character-hex-string"
+              exit 1
+            fi
+          fi
+          
+          # Validate emergency rollback requirements
+          if [ "$EMERGENCY_ROLLBACK" = "true" ]; then
+            if [ ${#ROLLBACK_REASON} -lt 20 ]; then
+              echo "❌ Emergency rollback requires a detailed reason (minimum 20 characters)"
+              echo "Please provide a comprehensive explanation for the emergency rollback"
+              exit 1
+            fi
+            
+            echo "🚨 EMERGENCY ROLLBACK ACTIVATED"
+            echo "⚠️  All safety checks will be bypassed"
+            echo "🔧 Emergency operator: $ROLLBACK_ACTOR"
+            echo "📝 Emergency reason: $ROLLBACK_REASON"
+            echo ""
+            echo "🚨 CRITICAL SAFETY WARNINGS:"
+            echo "- All automated safety mechanisms will be disabled"
+            echo "- Rollback verification will be skipped"
+            echo "- Health checks will be bypassed"
+            echo "- This is for emergency use only"
+            echo "- Monitor the system closely after rollback"
+            echo "- Be prepared for immediate manual intervention"
+            
+            # Override other bypass flags for emergency rollback
+            BYPASS_VERIFICATION="true"
+            BYPASS_HEALTH_CHECKS="true"
+          fi
+          
+          # Log comprehensive manual rollback action
+          gh variable set MANUAL_ROLLBACK_INITIATED_BY --body "$ROLLBACK_ACTOR" --repo ${{ github.repository }}
+          gh variable set MANUAL_ROLLBACK_INITIATED_AT --body "$ROLLBACK_TIMESTAMP" --repo ${{ github.repository }}
+          gh variable set MANUAL_ROLLBACK_REASON --body "$ROLLBACK_REASON" --repo ${{ github.repository }}
+          gh variable set MANUAL_ROLLBACK_TARGET --body "$ROLLBACK_TARGET" --repo ${{ github.repository }}
+          gh variable set MANUAL_ROLLBACK_BYPASS_VERIFICATION --body "$BYPASS_VERIFICATION" --repo ${{ github.repository }}
+          gh variable set MANUAL_ROLLBACK_BYPASS_HEALTH_CHECKS --body "$BYPASS_HEALTH_CHECKS" --repo ${{ github.repository }}
+          gh variable set MANUAL_ROLLBACK_EMERGENCY --body "$EMERGENCY_ROLLBACK" --repo ${{ github.repository }}
+          gh variable set MANUAL_ROLLBACK_SKIP_BACKUP --body "$SKIP_BACKUP" --repo ${{ github.repository }}
+          
+          # Create detailed manual rollback audit log
+          MANUAL_ROLLBACK_AUDIT="{\"rollback_type\":\"manual_rollback_workflow\",\"actor\":\"$ROLLBACK_ACTOR\",\"timestamp\":\"$ROLLBACK_TIMESTAMP\",\"reason\":\"$ROLLBACK_REASON\",\"target\":\"$ROLLBACK_TARGET\",\"artifact_digest\":\"${ARTIFACT_DIGEST:-'auto-select'}\",\"bypass_verification\":$BYPASS_VERIFICATION,\"bypass_health_checks\":$BYPASS_HEALTH_CHECKS,\"emergency_rollback\":$EMERGENCY_ROLLBACK,\"skip_backup\":$SKIP_BACKUP,\"workflow_run_id\":\"${{ github.run_id }}\",\"workflow_run_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
+          
+          gh variable set MANUAL_ROLLBACK_AUDIT --body "$MANUAL_ROLLBACK_AUDIT" --repo ${{ github.repository }}
+          
+          # Set outputs for later steps
+          echo "ROLLBACK_ACTOR=$ROLLBACK_ACTOR" >> $GITHUB_ENV
+          echo "ROLLBACK_TIMESTAMP=$ROLLBACK_TIMESTAMP" >> $GITHUB_ENV
+          echo "ROLLBACK_REASON=$ROLLBACK_REASON" >> $GITHUB_ENV
+          echo "ROLLBACK_TARGET=$ROLLBACK_TARGET" >> $GITHUB_ENV
+          echo "ARTIFACT_DIGEST=${ARTIFACT_DIGEST}" >> $GITHUB_ENV
+          echo "BYPASS_VERIFICATION=$BYPASS_VERIFICATION" >> $GITHUB_ENV
+          echo "BYPASS_HEALTH_CHECKS=$BYPASS_HEALTH_CHECKS" >> $GITHUB_ENV
+          echo "EMERGENCY_ROLLBACK=$EMERGENCY_ROLLBACK" >> $GITHUB_ENV
+          echo "SKIP_BACKUP=$SKIP_BACKUP" >> $GITHUB_ENV
+          
+          echo "✅ Manual rollback logged and validated successfully"
+          
+          # Add manual rollback summary to GitHub step summary
+          echo "## 🔄 Manual Rollback Initiated" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Rollback Details" >> $GITHUB_STEP_SUMMARY
+          echo "- **Operator**: $ROLLBACK_ACTOR" >> $GITHUB_STEP_SUMMARY
+          echo "- **Timestamp**: $ROLLBACK_TIMESTAMP" >> $GITHUB_STEP_SUMMARY
+          echo "- **Reason**: $ROLLBACK_REASON" >> $GITHUB_STEP_SUMMARY
+          echo "- **Target**: $ROLLBACK_TARGET" >> $GITHUB_STEP_SUMMARY
+          echo "- **Artifact**: ${ARTIFACT_DIGEST:-'Auto-select'}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Safety Overrides" >> $GITHUB_STEP_SUMMARY
+          echo "- **Bypass Verification**: $([ "$BYPASS_VERIFICATION" = "true" ] && echo "⚠️ YES" || echo "❌ NO")" >> $GITHUB_STEP_SUMMARY
+          echo "- **Bypass Health Checks**: $([ "$BYPASS_HEALTH_CHECKS" = "true" ] && echo "⚠️ YES" || echo "❌ NO")" >> $GITHUB_STEP_SUMMARY
+          echo "- **Emergency Rollback**: $([ "$EMERGENCY_ROLLBACK" = "true" ] && echo "🚨 YES" || echo "❌ NO")" >> $GITHUB_STEP_SUMMARY
+          echo "- **Skip Backup**: $([ "$SKIP_BACKUP" = "true" ] && echo "⚠️ YES" || echo "❌ NO")" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "$EMERGENCY_ROLLBACK" = "true" ] || [ "$BYPASS_VERIFICATION" = "true" ] || [ "$BYPASS_HEALTH_CHECKS" = "true" ]; then
+            echo "### 🚨 Emergency/Bypass Warning" >> $GITHUB_STEP_SUMMARY
+            echo "This manual rollback includes safety bypasses. Ensure you understand the implications:" >> $GITHUB_STEP_SUMMARY
+            echo "- Bypassing verification may skip important safety checks" >> $GITHUB_STEP_SUMMARY
+            echo "- Bypassing health checks may not detect rollback issues" >> $GITHUB_STEP_SUMMARY
+            echo "- Emergency rollback disables all automated safety mechanisms" >> $GITHUB_STEP_SUMMARY
+            echo "- Manual monitoring and intervention responsibility lies with the operator" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Acquire rollback lock
+        run: |
+          echo "🔒 Acquiring rollback lock..."
+          
+          # Check if another rollback is in progress
+          CURRENT_ROLLBACK=$(gh variable get ROLLBACK_IN_PROGRESS --repo ${{ github.repository }} 2>/dev/null || echo "false")
+          ROLLBACK_STARTED_BY=$(gh variable get ROLLBACK_STARTED_BY --repo ${{ github.repository }} 2>/dev/null || echo "")
+          ROLLBACK_STARTED_AT=$(gh variable get ROLLBACK_STARTED_AT --repo ${{ github.repository }} 2>/dev/null || echo "")
+          
+          if [ "$CURRENT_ROLLBACK" = "true" ]; then
+            echo "⚠️  Another rollback is already in progress"
+            echo "Started by: $ROLLBACK_STARTED_BY"
+            echo "Started at: $ROLLBACK_STARTED_AT"
+            
+            if [ "${{ env.EMERGENCY_ROLLBACK }}" = "true" ]; then
+              echo "🚨 EMERGENCY ROLLBACK OVERRIDE"
+              echo "⚠️  Forcing rollback despite concurrent rollback in progress"
+              echo "🔧 Emergency operator: ${{ env.ROLLBACK_ACTOR }}"
+              echo "📝 Emergency reason: ${{ env.ROLLBACK_REASON }}"
+              echo ""
+              echo "🚨 CRITICAL WARNING: This may cause conflicts with the running rollback"
+              
+              # Log emergency rollback override
+              gh variable set EMERGENCY_ROLLBACK_OVERRIDE --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }}
+              gh variable set EMERGENCY_ROLLBACK_OVERRIDE_BY --body "${{ env.ROLLBACK_ACTOR }}" --repo ${{ github.repository }}
+              gh variable set EMERGENCY_ROLLBACK_PREVIOUS_ACTOR --body "$ROLLBACK_STARTED_BY" --repo ${{ github.repository }}
+              
+              echo "⚠️  Proceeding with emergency rollback override"
+            else
+              echo "❌ Rollback lock is held by another process"
+              echo "Options to resolve:"
+              echo "1. Wait for the current rollback to complete"
+              echo "2. Use 'emergency_rollback' flag if this is truly an emergency"
+              echo "3. Manually clear the rollback lock if the previous rollback failed"
+              echo ""
+              echo "To manually clear a stale lock, run:"
+              echo "gh variable set ROLLBACK_IN_PROGRESS --body 'false' --repo ${{ github.repository }}"
+              exit 1
+            fi
+          fi
+          
+          # Set rollback lock
+          gh variable set ROLLBACK_IN_PROGRESS --body "true" --repo ${{ github.repository }}
+          gh variable set ROLLBACK_STARTED_BY --body "${{ env.ROLLBACK_ACTOR }}" --repo ${{ github.repository }}
+          gh variable set ROLLBACK_STARTED_AT --body "${{ env.ROLLBACK_TIMESTAMP }}" --repo ${{ github.repository }}
+          gh variable set ROLLBACK_WORKFLOW_RUN_ID --body "${{ github.run_id }}" --repo ${{ github.repository }}
+          
+          echo "✅ Rollback lock acquired successfully"
+          echo "Lock holder: ${{ env.ROLLBACK_ACTOR }}"
+          echo "Lock type: Manual Rollback Workflow"
+          echo "Workflow run: ${{ github.run_id }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine rollback target artifact
+        run: |
+          echo "🎯 Determining rollback target artifact..."
+          
+          ROLLBACK_TARGET="${{ env.ROLLBACK_TARGET }}"
+          TARGET_DIGEST=""
+          
+          case "$ROLLBACK_TARGET" in
+            "latest-backup")
+              echo "📦 Using latest backup artifact..."
+              TARGET_DIGEST=$(gh variable get BACKUP_ARTIFACT_DIGEST --repo ${{ github.repository }} 2>/dev/null || echo "")
+              
+              if [ -z "$TARGET_DIGEST" ]; then
+                echo "❌ No backup artifact digest found"
+                echo "Cannot perform digest-based rollback to latest backup"
+                echo "Consider using 'file-based' rollback target instead"
+                exit 1
+              fi
+              
+              echo "✅ Latest backup artifact: $TARGET_DIGEST"
+              ;;
+              
+            "specific-digest")
+              echo "🎯 Using specific artifact digest..."
+              TARGET_DIGEST="${{ env.ARTIFACT_DIGEST }}"
+              
+              # Validate the specific digest exists in registry
+              if ! python scripts/artifact_manager.py validate-digest --digest "$TARGET_DIGEST" --registry ${{ env.REGISTRY }} --repository ${{ env.IMAGE_NAME }}; then
+                echo "❌ Specified artifact digest not found in registry: $TARGET_DIGEST"
+                exit 1
+              fi
+              
+              echo "✅ Specific artifact validated: $TARGET_DIGEST"
+              ;;
+              
+            "file-based")
+              echo "📁 Using file-based rollback..."
+              echo "Will use local backup files instead of registry artifacts"
+              TARGET_DIGEST=""
+              ;;
+              
+            *)
+              echo "❌ Unknown rollback target: $ROLLBACK_TARGET"
+              exit 1
+              ;;
+          esac
+          
+          # Record rollback target information
+          gh variable set MANUAL_ROLLBACK_TARGET_DIGEST --body "${TARGET_DIGEST:-'file-based'}" --repo ${{ github.repository }}
+          
+          echo "TARGET_DIGEST=${TARGET_DIGEST}" >> $GITHUB_ENV
+          echo "✅ Rollback target determined successfully"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Execute manual rollback with bypass support
+        run: |
+          echo "🔄 Executing manual rollback with bypass support..."
+          
+          # Call the main deployment workflow with rollback parameters and bypass flags
+          ROLLBACK_PARAMS="{\"rollback\":true,\"artifact_digest\":\"${{ env.TARGET_DIGEST }}\",\"bypass_gating\":true,\"manual_reason\":\"${{ env.ROLLBACK_REASON }}\",\"force_deployment\":false,\"override_circuit_breaker\":false}"
+          
+          echo "📞 Calling deployment workflow with rollback parameters..."
+          echo "Parameters: $ROLLBACK_PARAMS"
+          
+          # Trigger the deployment workflow with rollback parameters
+          gh workflow run deploy.yml \
+            --repo ${{ github.repository }} \
+            --field rollback=true \
+            --field artifact_digest="${{ env.TARGET_DIGEST }}" \
+            --field bypass_gating=true \
+            --field manual_reason="${{ env.ROLLBACK_REASON }}" \
+            --field force_deployment=false \
+            --field override_circuit_breaker=false
+          
+          # Wait a moment for the workflow to start
+          sleep 5
+          
+          # Get the workflow run ID of the triggered deployment
+          DEPLOYMENT_RUN_ID=$(gh run list --workflow=deploy.yml --limit=1 --json databaseId --jq '.[0].databaseId')
+          
+          echo "🔗 Deployment workflow triggered: Run ID $DEPLOYMENT_RUN_ID"
+          echo "📊 Monitor progress: ${{ github.server_url }}/${{ github.repository }}/actions/runs/$DEPLOYMENT_RUN_ID"
+          
+          # Record the triggered deployment run
+          gh variable set MANUAL_ROLLBACK_DEPLOYMENT_RUN_ID --body "$DEPLOYMENT_RUN_ID" --repo ${{ github.repository }}
+          
+          # Wait for the deployment workflow to complete if not in emergency mode
+          if [ "${{ env.EMERGENCY_ROLLBACK }}" != "true" ]; then
+            echo "⏳ Waiting for rollback deployment to complete..."
+            
+            # Wait for completion with timeout
+            TIMEOUT=1800  # 30 minutes
+            ELAPSED=0
+            INTERVAL=30
+            
+            while [ $ELAPSED -lt $TIMEOUT ]; do
+              STATUS=$(gh run view $DEPLOYMENT_RUN_ID --json status --jq '.status')
+              CONCLUSION=$(gh run view $DEPLOYMENT_RUN_ID --json conclusion --jq '.conclusion')
+              
+              echo "Rollback status: $STATUS, conclusion: $CONCLUSION (elapsed: ${ELAPSED}s)"
+              
+              if [ "$STATUS" = "completed" ]; then
+                if [ "$CONCLUSION" = "success" ]; then
+                  echo "✅ Rollback deployment completed successfully"
+                  gh variable set MANUAL_ROLLBACK_STATUS --body "successful" --repo ${{ github.repository }}
+                  break
+                else
+                  echo "❌ Rollback deployment failed with conclusion: $CONCLUSION"
+                  gh variable set MANUAL_ROLLBACK_STATUS --body "failed" --repo ${{ github.repository }}
+                  gh variable set MANUAL_ROLLBACK_FAILURE_REASON --body "deployment_workflow_failed" --repo ${{ github.repository }}
+                  exit 1
+                fi
+              fi
+              
+              sleep $INTERVAL
+              ELAPSED=$((ELAPSED + INTERVAL))
+            done
+            
+            if [ $ELAPSED -ge $TIMEOUT ]; then
+              echo "⏰ Rollback deployment timed out after ${TIMEOUT}s"
+              gh variable set MANUAL_ROLLBACK_STATUS --body "timeout" --repo ${{ github.repository }}
+              gh variable set MANUAL_ROLLBACK_FAILURE_REASON --body "deployment_timeout" --repo ${{ github.repository }}
+              exit 1
+            fi
+          else
+            echo "🚨 Emergency rollback mode - not waiting for deployment completion"
+            echo "Monitor the deployment manually: ${{ github.server_url }}/${{ github.repository }}/actions/runs/$DEPLOYMENT_RUN_ID"
+            gh variable set MANUAL_ROLLBACK_STATUS --body "emergency_triggered" --repo ${{ github.repository }}
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate manual rollback summary
+        if: always()
+        run: |
+          echo "## 🔄 Manual Rollback Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Get rollback status
+          ROLLBACK_STATUS=$(gh variable get MANUAL_ROLLBACK_STATUS --repo ${{ github.repository }} 2>/dev/null || echo "unknown")
+          DEPLOYMENT_RUN_ID=$(gh variable get MANUAL_ROLLBACK_DEPLOYMENT_RUN_ID --repo ${{ github.repository }} 2>/dev/null || echo "")
+          
+          echo "### Rollback Operation Details" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Rollback Status**: $ROLLBACK_STATUS" >> $GITHUB_STEP_SUMMARY
+          echo "- **Operator**: ${{ env.ROLLBACK_ACTOR }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Timestamp**: ${{ env.ROLLBACK_TIMESTAMP }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Reason**: ${{ env.ROLLBACK_REASON }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Target**: ${{ env.ROLLBACK_TARGET }}" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -n "${{ env.TARGET_DIGEST }}" ]; then
+            echo "- **Target Artifact**: \`${{ env.TARGET_DIGEST }}\`" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ -n "$DEPLOYMENT_RUN_ID" ]; then
+            echo "- **Deployment Run**: [$DEPLOYMENT_RUN_ID](${{ github.server_url }}/${{ github.repository }}/actions/runs/$DEPLOYMENT_RUN_ID)" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Safety Overrides Applied" >> $GITHUB_STEP_SUMMARY
+          echo "- **Bypass Verification**: $([ "${{ env.BYPASS_VERIFICATION }}" = "true" ] && echo "⚠️ YES" || echo "❌ NO")" >> $GITHUB_STEP_SUMMARY
+          echo "- **Bypass Health Checks**: $([ "${{ env.BYPASS_HEALTH_CHECKS }}" = "true" ] && echo "⚠️ YES" || echo "❌ NO")" >> $GITHUB_STEP_SUMMARY
+          echo "- **Emergency Rollback**: $([ "${{ env.EMERGENCY_ROLLBACK }}" = "true" ] && echo "🚨 YES" || echo "❌ NO")" >> $GITHUB_STEP_SUMMARY
+          echo "- **Skip Backup**: $([ "${{ env.SKIP_BACKUP }}" = "true" ] && echo "⚠️ YES" || echo "❌ NO")" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Manual Rollback Outcome" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ job.status }}" = "success" ] && [ "$ROLLBACK_STATUS" = "successful" ]; then
+            echo "✅ **Manual rollback completed successfully**" >> $GITHUB_STEP_SUMMARY
+            echo "- Rollback operation executed without errors" >> $GITHUB_STEP_SUMMARY
+            echo "- Service should be restored to previous state" >> $GITHUB_STEP_SUMMARY
+            echo "- Monitor service health to confirm successful rollback" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ env.EMERGENCY_ROLLBACK }}" = "true" ] && [ "$ROLLBACK_STATUS" = "emergency_triggered" ]; then
+            echo "🚨 **Emergency rollback triggered**" >> $GITHUB_STEP_SUMMARY
+            echo "- Emergency rollback has been initiated" >> $GITHUB_STEP_SUMMARY
+            echo "- Monitor the deployment workflow for completion" >> $GITHUB_STEP_SUMMARY
+            echo "- Verify service health manually after completion" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **Manual rollback failed or incomplete**" >> $GITHUB_STEP_SUMMARY
+            echo "- Review logs for specific failure details" >> $GITHUB_STEP_SUMMARY
+            echo "- Manual intervention may be required" >> $GITHUB_STEP_SUMMARY
+            echo "- Consider emergency rollback if service is critical" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Audit Information" >> $GITHUB_STEP_SUMMARY
+          echo "This manual rollback operation has been fully logged:" >> $GITHUB_STEP_SUMMARY
+          echo "- **Workflow Run**: ${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Audit Variables**: \`MANUAL_ROLLBACK_AUDIT\`, \`MANUAL_ROLLBACK_*\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repository**: ${{ github.repository }}" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "*🔄 Manual rollback operation completed. All actions have been logged for audit and compliance purposes.*" >> $GITHUB_STEP_SUMMARY
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Release rollback lock
+        if: always()
+        run: |
+          echo "🔓 Releasing rollback lock..."
+          
+          # Clear rollback lock
+          gh variable set ROLLBACK_IN_PROGRESS --body "false" --repo ${{ github.repository }}
+          gh variable delete ROLLBACK_STARTED_BY --repo ${{ github.repository }} 2>/dev/null || true
+          gh variable delete ROLLBACK_STARTED_AT --repo ${{ github.repository }} 2>/dev/null || true
+          gh variable delete ROLLBACK_WORKFLOW_RUN_ID --repo ${{ github.repository }} 2>/dev/null || true
+          
+          echo "✅ Rollback lock released"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Manual rollback failure notification
+        if: failure()
+        run: |
+          echo "❌ Manual rollback failed! Enhanced failure tracking and notification."
+          
+          # Record comprehensive failure information
+          FAILURE_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          
+          gh variable set MANUAL_ROLLBACK_STATUS --body "failed" --repo ${{ github.repository }}
+          gh variable set MANUAL_ROLLBACK_FAILURE_TIME --body "$FAILURE_TIMESTAMP" --repo ${{ github.repository }}
+          gh variable set MANUAL_ROLLBACK_FAILURE_WORKFLOW --body "${{ github.run_id }}" --repo ${{ github.repository }}
+          
+          # Generate failure summary
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 🚨 Manual Rollback Failure Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Failure Details" >> $GITHUB_STEP_SUMMARY
+          echo "- **Operation Type**: Manual Rollback" >> $GITHUB_STEP_SUMMARY
+          echo "- **Failure Time**: $FAILURE_TIMESTAMP" >> $GITHUB_STEP_SUMMARY
+          echo "- **Operator**: ${{ env.ROLLBACK_ACTOR }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Target**: ${{ env.ROLLBACK_TARGET }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Reason**: ${{ env.ROLLBACK_REASON }}" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -n "${{ env.TARGET_DIGEST }}" ]; then
+            echo "- **Target Artifact**: \`${{ env.TARGET_DIGEST }}\`" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Recommended Actions" >> $GITHUB_STEP_SUMMARY
+          echo "1. 🔍 **Review failure logs** in this workflow run" >> $GITHUB_STEP_SUMMARY
+          echo "2. 🔄 **Check deployment workflow** if it was triggered" >> $GITHUB_STEP_SUMMARY
+          echo "3. 🚨 **Consider emergency rollback** if service is critical" >> $GITHUB_STEP_SUMMARY
+          echo "4. 🛠️ **Manual intervention** may be required" >> $GITHUB_STEP_SUMMARY
+          echo "5. 📋 **Verify current service status** manually" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "*🚨 Manual rollback failure has been logged. Immediate attention may be required.*" >> $GITHUB_STEP_SUMMARY
+          
+          echo "💡 Manual rollback failure information recorded. Immediate manual intervention may be required."
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

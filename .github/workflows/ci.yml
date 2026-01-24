@@ -6,6 +6,17 @@ on:
   pull_request:
     branches: [ main ]
 
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  # CI Configuration - Set to 'true' to enable, 'false' to disable
+  ENABLE_FLAKE8: true
+  ENABLE_BLACK: true
+  ENABLE_MYPY: true
+  ENABLE_BANDIT: true
+  ENABLE_COVERAGE: true
+  COVERAGE_THRESHOLD: 70
+
 jobs:
   lint-and-test:
     name: Lint and Test (Python ${{ matrix.python-version }})
@@ -45,24 +56,101 @@ jobs:
       
       - name: Run code quality checks
         run: |
-          echo "🔍 Running linting..."
-          flake8 src/ tests/ --max-line-length=120 --exclude=venv --statistics --output-file=flake8-report.txt || true
+          QUALITY_CHECKS_FAILED=0
           
-          echo "🎨 Checking code formatting..."
-          black --check src/ tests/ --diff
+          # Conditional execution based on configuration
+          if [ "${{ env.ENABLE_FLAKE8 }}" = "true" ]; then
+            echo "🔍 Running linting..."
+            flake8 src/ tests/ --max-line-length=120 --exclude=venv --statistics --output-file=flake8-report.txt
+            FLAKE8_EXIT_CODE=$?
+            if [ $FLAKE8_EXIT_CODE -ne 0 ]; then
+              echo "❌ Flake8 linting failed"
+              QUALITY_CHECKS_FAILED=1
+            else
+              echo "✅ Flake8 linting passed"
+            fi
+          else
+            echo "⏭️ Flake8 linting disabled"
+          fi
           
-          echo "🔍 Type checking..."
-          mypy src/ --ignore-missing-imports --junit-xml=mypy-report.xml || true
+          if [ "${{ env.ENABLE_BLACK }}" = "true" ]; then
+            echo "🎨 Checking code formatting..."
+            black --check src/ tests/ --diff
+            BLACK_EXIT_CODE=$?
+            if [ $BLACK_EXIT_CODE -ne 0 ]; then
+              echo "❌ Black formatting check failed"
+              QUALITY_CHECKS_FAILED=1
+            else
+              echo "✅ Black formatting check passed"
+            fi
+          else
+            echo "⏭️ Black formatting check disabled"
+          fi
           
-          echo "🔒 Security scanning..."
-          bandit -r src/ -ll -f json -o bandit-report.json || true
-          bandit -r src/ -ll
+          if [ "${{ env.ENABLE_MYPY }}" = "true" ]; then
+            echo "🔍 Type checking..."
+            mypy src/ --ignore-missing-imports --junit-xml=mypy-report.xml
+            MYPY_EXIT_CODE=$?
+            if [ $MYPY_EXIT_CODE -ne 0 ]; then
+              echo "❌ MyPy type checking failed"
+              QUALITY_CHECKS_FAILED=1
+            else
+              echo "✅ MyPy type checking passed"
+            fi
+          else
+            echo "⏭️ MyPy type checking disabled"
+          fi
+          
+          if [ "${{ env.ENABLE_BANDIT }}" = "true" ]; then
+            echo "🔒 Security scanning..."
+            bandit -r src/ -ll -f json -o bandit-report.json
+            BANDIT_EXIT_CODE=$?
+            if [ $BANDIT_EXIT_CODE -ne 0 ]; then
+              echo "❌ Bandit security scan failed"
+              QUALITY_CHECKS_FAILED=1
+            else
+              echo "✅ Bandit security scan passed"
+            fi
+          else
+            echo "⏭️ Bandit security scanning disabled"
+          fi
+          
+          # CI Gating: Fail if any enabled quality check fails
+          if [ $QUALITY_CHECKS_FAILED -eq 1 ]; then
+            echo "❌ One or more code quality checks failed. Blocking artifact creation."
+            exit 1
+          fi
+          
+          echo "✅ All enabled code quality checks passed"
       
       - name: Run tests with coverage
         run: |
           echo "🧪 Running tests..."
           pytest --cov=src tests/ --cov-report=xml --cov-report=html --cov-report=term-missing --junit-xml=pytest-report.xml
-          coverage report --fail-under=70
+          PYTEST_EXIT_CODE=$?
+          
+          if [ $PYTEST_EXIT_CODE -ne 0 ]; then
+            echo "❌ Tests failed. Blocking artifact creation."
+            exit 1
+          fi
+          
+          # Conditional coverage enforcement
+          if [ "${{ env.ENABLE_COVERAGE }}" = "true" ]; then
+            echo "📊 Enforcing coverage threshold..."
+            coverage report --fail-under=${{ env.COVERAGE_THRESHOLD }}
+            COVERAGE_EXIT_CODE=$?
+            
+            if [ $COVERAGE_EXIT_CODE -ne 0 ]; then
+              echo "❌ Coverage threshold (${{ env.COVERAGE_THRESHOLD }}%) not met. Blocking artifact creation."
+              exit 1
+            fi
+            
+            echo "✅ Coverage threshold met"
+          else
+            echo "⏭️ Coverage enforcement disabled"
+          fi
+          
+          echo "✅ All tests passed and coverage requirements met"
       
       - name: Upload coverage reports
         if: matrix.python-version == '3.11'
@@ -94,3 +182,140 @@ jobs:
             echo "### Coverage Report" >> $GITHUB_STEP_SUMMARY
             coverage report | tail -n 3 >> $GITHUB_STEP_SUMMARY
           fi
+      
+      - name: CI Gating Validation
+        if: success()
+        run: |
+          echo "🎯 CI Gating Validation"
+          echo "All CI checks have passed successfully:"
+          echo "- Unit tests: ✅ PASSED"
+          if [ "${{ env.ENABLE_FLAKE8 }}" = "true" ]; then
+            echo "- Flake8 linting: ✅ PASSED"
+          fi
+          if [ "${{ env.ENABLE_BLACK }}" = "true" ]; then
+            echo "- Black formatting: ✅ PASSED"
+          fi
+          if [ "${{ env.ENABLE_MYPY }}" = "true" ]; then
+            echo "- MyPy type checking: ✅ PASSED"
+          fi
+          if [ "${{ env.ENABLE_BANDIT }}" = "true" ]; then
+            echo "- Bandit security scan: ✅ PASSED"
+          fi
+          if [ "${{ env.ENABLE_COVERAGE }}" = "true" ]; then
+            echo "- Coverage threshold (${{ env.COVERAGE_THRESHOLD }}%): ✅ PASSED"
+          fi
+          echo ""
+          echo "🚀 Artifact creation is APPROVED"
+          echo "CI_GATING_PASSED=true" >> $GITHUB_ENV
+      
+      - name: CI Gating Failure
+        if: failure()
+        run: |
+          echo "🚫 CI Gating Validation FAILED"
+          echo "One or more CI checks have failed. Artifact creation is BLOCKED."
+          echo "CI_GATING_PASSED=false" >> $GITHUB_ENV
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## ❌ CI Gating Failed" >> $GITHUB_STEP_SUMMARY
+          echo "Artifact creation has been blocked due to CI failures." >> $GITHUB_STEP_SUMMARY
+
+  build-artifact:
+    name: Build and Push Docker Artifact
+    runs-on:
+      - tailpaste-runners
+    needs: lint-and-test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && needs.lint-and-test.result == 'success'
+    outputs:
+      image-digest: ${{ steps.build.outputs.digest }}
+      image-tag: ${{ steps.meta.outputs.tags }}
+      
+    steps:
+      - name: Validate CI Gating
+        run: |
+          echo "🔍 Validating CI Gating Status"
+          if [ "${{ needs.lint-and-test.result }}" != "success" ]; then
+            echo "❌ CI gating failed. Cannot proceed with artifact creation."
+            echo "Lint and test job result: ${{ needs.lint-and-test.result }}"
+            exit 1
+          fi
+          echo "✅ CI gating validation passed. Proceeding with artifact creation."
+      
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+      
+      - name: Check for existing artifact
+        id: check-artifact
+        run: |
+          python scripts/artifact_manager.py check-existing \
+            --registry ${{ env.REGISTRY }} \
+            --repository ${{ env.IMAGE_NAME }} \
+            --commit ${{ github.sha }}
+        continue-on-error: true
+      
+      - name: Build and push Docker image
+        id: build
+        if: steps.check-artifact.outcome == 'failure'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+      
+      - name: Generate artifact digest
+        id: digest
+        run: |
+          if [ "${{ steps.check-artifact.outcome }}" = "success" ]; then
+            echo "Using existing artifact digest"
+            DIGEST=$(python scripts/artifact_manager.py get-digest --commit ${{ github.sha }})
+          else
+            echo "Using newly built artifact digest"
+            DIGEST="${{ steps.build.outputs.digest }}"
+          fi
+          echo "digest=$DIGEST" >> $GITHUB_OUTPUT
+          python scripts/artifact_manager.py record-artifact \
+            --digest "$DIGEST" \
+            --commit ${{ github.sha }} \
+            --registry ${{ env.REGISTRY }} \
+            --repository ${{ env.IMAGE_NAME }}
+      
+      - name: Validate artifact digest
+        run: |
+          python scripts/artifact_manager.py validate-digest \
+            --digest ${{ steps.digest.outputs.digest }} \
+            --registry ${{ env.REGISTRY }} \
+            --repository ${{ env.IMAGE_NAME }}
+      
+      - name: Update artifact summary
+        run: |
+          echo "## Docker Artifact Built" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Registry**: ${{ env.REGISTRY }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repository**: ${{ env.IMAGE_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Digest**: \`${{ steps.digest.outputs.digest }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Tags**: ${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY

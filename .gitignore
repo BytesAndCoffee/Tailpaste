@@ -50,3 +50,6 @@ config.toml
 
 # Kiro specs (development artifacts)
 .kiro/
+
+# CI/CD artifacts metadata
+.artifacts.json

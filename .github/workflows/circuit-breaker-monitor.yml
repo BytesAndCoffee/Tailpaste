@@ -1,0 +1,264 @@
+name: Circuit Breaker Monitor
+
+on:
+  schedule:
+    # Check circuit breaker status every hour
+    - cron: '0 * * * *'
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to perform'
+        required: true
+        type: choice
+        options:
+          - status
+          - check-thresholds
+          - reset
+          - export-logs
+        default: status
+      reset_failures:
+        description: 'Reset failure counts when closing circuit breaker'
+        required: false
+        type: boolean
+        default: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  circuit-breaker-monitor:
+    name: Circuit Breaker Monitoring and Management
+    runs-on:
+      - tailpaste-runners
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Initialize monitoring session
+        run: |
+          echo "🔌 Starting circuit breaker monitoring session..."
+          
+          MONITORING_SESSION_ID="cb-monitor-$(date +%Y%m%d-%H%M%S)-$(openssl rand -hex 4)"
+          ACTION="${{ inputs.action || 'status' }}"
+          
+          echo "MONITORING_SESSION_ID=$MONITORING_SESSION_ID" >> $GITHUB_ENV
+          echo "ACTION=$ACTION" >> $GITHUB_ENV
+          
+          echo "✅ Circuit breaker monitoring session initialized: $MONITORING_SESSION_ID"
+          echo "📊 Action: $ACTION"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Check circuit breaker status
+        id: status_check
+        run: |
+          echo "🔍 Checking comprehensive circuit breaker status..."
+          
+          # Use the enhanced circuit breaker script
+          python scripts/circuit_breaker.py --repo ${{ github.repository }} status --json > /tmp/cb_status.json
+          
+          # Parse status
+          CB_STATUS=$(python -c "import json; data=json.load(open('/tmp/cb_status.json')); print(data['status'])")
+          RECOVERY_FAILURES=$(python -c "import json; data=json.load(open('/tmp/cb_status.json')); print(data['recovery_failure_count'])")
+          DEPLOYMENT_FAILURES=$(python -c "import json; data=json.load(open('/tmp/cb_status.json')); print(data['deployment_failure_count'])")
+          RECOVERY_THRESHOLD=$(python -c "import json; data=json.load(open('/tmp/cb_status.json')); print(data['recovery_threshold'])")
+          DEPLOYMENT_THRESHOLD=$(python -c "import json; data=json.load(open('/tmp/cb_status.json')); print(data['deployment_threshold'])")
+          
+          echo "Circuit Breaker Status: $CB_STATUS"
+          echo "Recovery Failures: $RECOVERY_FAILURES / $RECOVERY_THRESHOLD"
+          echo "Deployment Failures: $DEPLOYMENT_FAILURES / $DEPLOYMENT_THRESHOLD"
+          
+          echo "CB_STATUS=$CB_STATUS" >> $GITHUB_OUTPUT
+          echo "RECOVERY_FAILURES=$RECOVERY_FAILURES" >> $GITHUB_OUTPUT
+          echo "DEPLOYMENT_FAILURES=$DEPLOYMENT_FAILURES" >> $GITHUB_OUTPUT
+          echo "RECOVERY_THRESHOLD=$RECOVERY_THRESHOLD" >> $GITHUB_OUTPUT
+          echo "DEPLOYMENT_THRESHOLD=$DEPLOYMENT_THRESHOLD" >> $GITHUB_OUTPUT
+          
+          # Check if thresholds are exceeded
+          RECOVERY_EXCEEDED=$([[ $RECOVERY_FAILURES -ge $RECOVERY_THRESHOLD ]] && echo "true" || echo "false")
+          DEPLOYMENT_EXCEEDED=$([[ $DEPLOYMENT_FAILURES -ge $DEPLOYMENT_THRESHOLD ]] && echo "true" || echo "false")
+          
+          echo "RECOVERY_EXCEEDED=$RECOVERY_EXCEEDED" >> $GITHUB_OUTPUT
+          echo "DEPLOYMENT_EXCEEDED=$DEPLOYMENT_EXCEEDED" >> $GITHUB_OUTPUT
+          
+          if [ "$CB_STATUS" = "open" ]; then
+            echo "🚫 Circuit breaker is currently OPEN"
+          elif [ "$RECOVERY_EXCEEDED" = "true" ] || [ "$DEPLOYMENT_EXCEEDED" = "true" ]; then
+            echo "⚠️  Thresholds exceeded but circuit breaker is still closed"
+          else
+            echo "✅ Circuit breaker is healthy"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Check thresholds and auto-open if needed
+        if: env.ACTION == 'check-thresholds' || github.event_name == 'schedule'
+        run: |
+          echo "🔍 Checking thresholds and auto-opening if needed..."
+          
+          # Use the enhanced circuit breaker script to check and auto-open
+          if python scripts/circuit_breaker.py --repo ${{ github.repository }} check; then
+            echo "✅ Thresholds are within limits"
+          else
+            echo "🚫 Circuit breaker was automatically opened due to threshold violations"
+            
+            # Record the automatic opening
+            gh variable set LAST_AUTOMATIC_CB_TRIGGER --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }}
+            gh variable set AUTOMATIC_CB_TRIGGER_REASON --body "threshold_monitoring" --repo ${{ github.repository }}
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Reset circuit breaker
+        if: env.ACTION == 'reset'
+        run: |
+          echo "🔄 Resetting circuit breaker..."
+          
+          RESET_FAILURES="${{ inputs.reset_failures }}"
+          
+          if [ "$RESET_FAILURES" = "true" ]; then
+            python scripts/circuit_breaker.py --repo ${{ github.repository }} close
+          else
+            python scripts/circuit_breaker.py --repo ${{ github.repository }} close --keep-failures
+          fi
+          
+          if [ $? -eq 0 ]; then
+            echo "✅ Circuit breaker reset successfully"
+            
+            # Record manual reset
+            gh variable set LAST_MANUAL_CB_RESET --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }}
+            gh variable set MANUAL_CB_RESET_BY --body "${{ github.actor }}" --repo ${{ github.repository }}
+          else
+            echo "❌ Failed to reset circuit breaker"
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Export circuit breaker logs
+        if: env.ACTION == 'export-logs' || github.event_name == 'schedule'
+        run: |
+          echo "📋 Exporting circuit breaker logs and status..."
+          
+          # Export comprehensive status
+          python scripts/circuit_breaker.py --repo ${{ github.repository }} status --export /tmp/circuit_breaker_export.json
+          
+          # Show event log
+          echo "📝 Recent Circuit Breaker Events:"
+          python scripts/circuit_breaker.py --repo ${{ github.repository }} events
+          
+          # Show recovery history
+          echo "🔄 Recovery History:"
+          python scripts/circuit_breaker.py --repo ${{ github.repository }} history
+          
+          # Upload export as artifact
+          echo "📤 Uploading circuit breaker export as artifact..."
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Upload circuit breaker export
+        if: env.ACTION == 'export-logs' || github.event_name == 'schedule'
+        uses: actions/upload-artifact@v4
+        with:
+          name: circuit-breaker-export-${{ env.MONITORING_SESSION_ID }}
+          path: /tmp/circuit_breaker_export.json
+          retention-days: 30
+      
+      - name: Generate monitoring summary
+        if: always()
+        run: |
+          echo "📋 Generating circuit breaker monitoring summary..."
+          
+          CB_STATUS="${{ steps.status_check.outputs.CB_STATUS }}"
+          RECOVERY_FAILURES="${{ steps.status_check.outputs.RECOVERY_FAILURES }}"
+          DEPLOYMENT_FAILURES="${{ steps.status_check.outputs.DEPLOYMENT_FAILURES }}"
+          RECOVERY_THRESHOLD="${{ steps.status_check.outputs.RECOVERY_THRESHOLD }}"
+          DEPLOYMENT_THRESHOLD="${{ steps.status_check.outputs.DEPLOYMENT_THRESHOLD }}"
+          RECOVERY_EXCEEDED="${{ steps.status_check.outputs.RECOVERY_EXCEEDED }}"
+          DEPLOYMENT_EXCEEDED="${{ steps.status_check.outputs.DEPLOYMENT_EXCEEDED }}"
+          
+          # Create comprehensive summary
+          echo "## 🔌 Circuit Breaker Monitoring Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Monitoring Session" >> $GITHUB_STEP_SUMMARY
+          echo "- **Session ID**: \`$MONITORING_SESSION_ID\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Timestamp**: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Action**: $ACTION" >> $GITHUB_STEP_SUMMARY
+          echo "- **Triggered By**: ${{ github.event_name == 'schedule' && 'Scheduled' || github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "### Circuit Breaker Status" >> $GITHUB_STEP_SUMMARY
+          
+          # Status with emoji
+          case "$CB_STATUS" in
+            "open")
+              echo "- **Status**: 🚫 **OPEN** - Manual intervention required" >> $GITHUB_STEP_SUMMARY
+              ;;
+            "closed")
+              echo "- **Status**: ✅ **CLOSED** - Normal operation" >> $GITHUB_STEP_SUMMARY
+              ;;
+            *)
+              echo "- **Status**: ❓ **$CB_STATUS** - Unknown state" >> $GITHUB_STEP_SUMMARY
+              ;;
+          esac
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Failure Counts" >> $GITHUB_STEP_SUMMARY
+          echo "- **Recovery Failures**: $RECOVERY_FAILURES / $RECOVERY_THRESHOLD $([ "$RECOVERY_EXCEEDED" = "true" ] && echo "🚫 **EXCEEDED**" || echo "✅ Within limit")" >> $GITHUB_STEP_SUMMARY
+          echo "- **Deployment Failures**: $DEPLOYMENT_FAILURES / $DEPLOYMENT_THRESHOLD $([ "$DEPLOYMENT_EXCEEDED" = "true" ] && echo "🚫 **EXCEEDED**" || echo "✅ Within limit")" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Recommendations" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "$CB_STATUS" = "open" ]; then
+            echo "#### 🚨 Circuit Breaker is Open" >> $GITHUB_STEP_SUMMARY
+            echo "1. 🔍 **Investigate root cause** of repeated failures" >> $GITHUB_STEP_SUMMARY
+            echo "2. 🛠️ **Fix underlying issues** manually" >> $GITHUB_STEP_SUMMARY
+            echo "3. 🧪 **Test systems** manually to verify fixes" >> $GITHUB_STEP_SUMMARY
+            echo "4. 🔄 **Reset circuit breaker** using manual workflow trigger" >> $GITHUB_STEP_SUMMARY
+          elif [ "$RECOVERY_EXCEEDED" = "true" ] || [ "$DEPLOYMENT_EXCEEDED" = "true" ]; then
+            echo "#### ⚠️  Thresholds Exceeded" >> $GITHUB_STEP_SUMMARY
+            echo "1. 🔍 **Monitor system closely** for additional failures" >> $GITHUB_STEP_SUMMARY
+            echo "2. 🛠️ **Address root causes** before circuit breaker opens automatically" >> $GITHUB_STEP_SUMMARY
+            echo "3. 📊 **Review failure patterns** to identify systemic issues" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "#### ✅ System Healthy" >> $GITHUB_STEP_SUMMARY
+            echo "- Circuit breaker is functioning normally" >> $GITHUB_STEP_SUMMARY
+            echo "- All failure counts are within acceptable thresholds" >> $GITHUB_STEP_SUMMARY
+            echo "- Continue normal monitoring" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Quick Actions" >> $GITHUB_STEP_SUMMARY
+          echo "- **View Status**: Run this workflow with 'status' action" >> $GITHUB_STEP_SUMMARY
+          echo "- **Check Thresholds**: Run this workflow with 'check-thresholds' action" >> $GITHUB_STEP_SUMMARY
+          echo "- **Reset Circuit Breaker**: Run this workflow with 'reset' action" >> $GITHUB_STEP_SUMMARY
+          echo "- **Export Logs**: Run this workflow with 'export-logs' action" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "*🔄 Next monitoring check scheduled in 1 hour*" >> $GITHUB_STEP_SUMMARY
+          
+          echo "✅ Circuit breaker monitoring summary generated"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Cleanup monitoring session
+        if: always()
+        run: |
+          echo "🧹 Cleaning up circuit breaker monitoring session..."
+          
+          # Update last monitoring session
+          gh variable set LAST_CB_MONITORING_SESSION --body "$MONITORING_SESSION_ID" --repo ${{ github.repository }}
+          gh variable set LAST_CB_MONITORING_TIME --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }}
+          
+          echo "✅ Circuit breaker monitoring session cleanup completed"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

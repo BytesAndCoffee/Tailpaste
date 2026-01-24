@@ -1,0 +1,387 @@
+name: Continuous Health Monitoring
+
+on:
+  schedule:
+    # Run health checks every 5 minutes
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+    inputs:
+      force_recovery:
+        description: 'Force recovery actions even if health checks pass'
+        required: false
+        type: boolean
+        default: false
+      skip_recovery:
+        description: 'Skip recovery actions even if health checks fail'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  health-monitor:
+    name: Continuous Health Monitoring
+    runs-on:
+      - tailpaste-runners
+    
+    # Prevent concurrent health monitoring runs
+    concurrency:
+      group: health-monitoring
+      cancel-in-progress: false
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+          ping: docker.tailfa875.ts.net
+      
+      - name: Initialize health monitoring session
+        run: |
+          echo "🏥 Starting continuous health monitoring session..."
+          
+          # Get current deployment state
+          DEPLOYED_DIGEST=$(gh variable get DEPLOYED_ARTIFACT_DIGEST --repo ${{ github.repository }} 2>/dev/null || echo "")
+          DEPLOYMENT_STATUS=$(gh variable get DEPLOYMENT_STATUS --repo ${{ github.repository }} 2>/dev/null || echo "unknown")
+          
+          echo "Current deployed artifact: ${DEPLOYED_DIGEST:-'none'}"
+          echo "Current deployment status: $DEPLOYMENT_STATUS"
+          
+          # Initialize monitoring session variables
+          MONITORING_SESSION_ID="health-$(date +%Y%m%d-%H%M%S)-$(openssl rand -hex 4)"
+          echo "MONITORING_SESSION_ID=$MONITORING_SESSION_ID" >> $GITHUB_ENV
+          echo "DEPLOYED_DIGEST=$DEPLOYED_DIGEST" >> $GITHUB_ENV
+          echo "DEPLOYMENT_STATUS=$DEPLOYMENT_STATUS" >> $GITHUB_ENV
+          
+          # Record monitoring session start
+          gh variable set LAST_HEALTH_CHECK_START --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }}
+          gh variable set HEALTH_MONITORING_SESSION --body "$MONITORING_SESSION_ID" --repo ${{ github.repository }}
+          
+          echo "✅ Health monitoring session initialized: $MONITORING_SESSION_ID"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Execute comprehensive health checks
+        id: health_checks
+        run: |
+          echo "🔍 Executing comprehensive health checks using enhanced health check script..."
+          
+          # Run the enhanced health check script with JSON output
+          if python3 scripts/health_check.py --json --export /tmp/health_results.json; then
+            echo "✅ Health checks completed successfully"
+            HEALTH_CHECK_SUCCESS=true
+          else
+            echo "❌ Health checks failed"
+            HEALTH_CHECK_SUCCESS=false
+          fi
+          
+          # Parse results from the health check script
+          if [ -f "/tmp/health_results.json" ]; then
+            OVERALL_HEALTH=$(python3 -c "import json; data=json.load(open('/tmp/health_results.json')); print(data['overall_status'])")
+            HEALTH_DETAILS=$(python3 -c "import json; data=json.load(open('/tmp/health_results.json')); print(data.get('health_details', 'Health check completed'))")
+            
+            # Extract individual check results
+            SERVICE_AVAILABLE=$(python3 -c "import json; data=json.load(open('/tmp/health_results.json')); print(str(data['checks'].get('service', {}).get('status') == 'passed').lower())")
+            FUNCTIONALITY_OK=$(python3 -c "import json; data=json.load(open('/tmp/health_results.json')); print(str(data['checks'].get('functionality', {}).get('status') == 'passed').lower())")
+            CONTAINER_HEALTHY=$(python3 -c "import json; data=json.load(open('/tmp/health_results.json')); print(str(data['checks'].get('container', {}).get('status') == 'passed').lower())")
+            
+            echo "Health check results:"
+            echo "  Overall: $OVERALL_HEALTH"
+            echo "  Service Available: $SERVICE_AVAILABLE"
+            echo "  Functionality OK: $FUNCTIONALITY_OK"
+            echo "  Container Healthy: $CONTAINER_HEALTHY"
+          else
+            echo "⚠️  Health results file not found, using fallback status"
+            OVERALL_HEALTH="unknown"
+            HEALTH_DETAILS="Health check script did not produce results file"
+            SERVICE_AVAILABLE="false"
+            FUNCTIONALITY_OK="false"
+            CONTAINER_HEALTHY="false"
+          fi
+          
+          # Set outputs for next steps
+          echo "OVERALL_HEALTH=$OVERALL_HEALTH" >> $GITHUB_OUTPUT
+          echo "HEALTH_DETAILS=$HEALTH_DETAILS" >> $GITHUB_OUTPUT
+          echo "SERVICE_AVAILABLE=$SERVICE_AVAILABLE" >> $GITHUB_OUTPUT
+          echo "FUNCTIONALITY_OK=$FUNCTIONALITY_OK" >> $GITHUB_OUTPUT
+          echo "CONTAINER_HEALTHY=$CONTAINER_HEALTHY" >> $GITHUB_OUTPUT
+          echo "HEALTH_CHECK_SUCCESS=$HEALTH_CHECK_SUCCESS" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Record health check results
+        run: |
+          echo "📊 Recording health check results..."
+          
+          OVERALL_HEALTH="${{ steps.health_checks.outputs.OVERALL_HEALTH }}"
+          HEALTH_DETAILS="${{ steps.health_checks.outputs.HEALTH_DETAILS }}"
+          
+          # Record results in GitHub variables
+          gh variable set LAST_HEALTH_CHECK_STATUS --body "$OVERALL_HEALTH" --repo ${{ github.repository }}
+          gh variable set LAST_HEALTH_CHECK_TIME --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }}
+          gh variable set LAST_HEALTH_CHECK_SESSION --body "$MONITORING_SESSION_ID" --repo ${{ github.repository }}
+          
+          # Record in artifact manager if we have a deployed artifact
+          if [ -n "$DEPLOYED_DIGEST" ]; then
+            echo "Recording health check for deployed artifact: $DEPLOYED_DIGEST"
+            
+            python scripts/artifact_manager.py record-test-result \
+              --digest "$DEPLOYED_DIGEST" \
+              --test-type "health_check" \
+              --status "$OVERALL_HEALTH" \
+              --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              --details "Continuous health monitoring: $HEALTH_DETAILS"
+          else
+            echo "⚠️  No deployed artifact found - health check not recorded in artifact manager"
+          fi
+          
+          # Update health check history (keep last 10 results)
+          HEALTH_HISTORY=$(gh variable get HEALTH_CHECK_HISTORY --repo ${{ github.repository }} 2>/dev/null || echo "[]")
+          
+          UPDATED_HISTORY=$(python3 -c "
+import json
+import sys
+
+try:
+    history = json.loads('$HEALTH_HISTORY')
+except:
+    history = []
+
+# Add new result
+new_result = {
+    'timestamp': '$(date -u +%Y-%m-%dT%H:%M:%SZ)',
+    'status': '$OVERALL_HEALTH',
+    'session_id': '$MONITORING_SESSION_ID'
+}
+
+history.append(new_result)
+
+# Keep only last 10 results
+history = history[-10:]
+
+print(json.dumps(history, separators=(',', ':')))
+")
+          
+          gh variable set HEALTH_CHECK_HISTORY --body "$UPDATED_HISTORY" --repo ${{ github.repository }}
+          
+          echo "✅ Health check results recorded"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Evaluate recovery conditions
+        id: recovery_evaluation
+        run: |
+          echo "🔍 Evaluating recovery conditions..."
+          
+          OVERALL_HEALTH="${{ steps.health_checks.outputs.OVERALL_HEALTH }}"
+          FORCE_RECOVERY="${{ inputs.force_recovery }}"
+          SKIP_RECOVERY="${{ inputs.skip_recovery }}"
+          
+          SHOULD_TRIGGER_RECOVERY=false
+          RECOVERY_REASON=""
+          
+          # Check if recovery should be triggered
+          if [ "$SKIP_RECOVERY" = "true" ]; then
+            echo "⏭️  Recovery skipped by manual input"
+            RECOVERY_REASON="manually_skipped"
+          elif [ "$FORCE_RECOVERY" = "true" ]; then
+            echo "🔧 Recovery forced by manual input"
+            SHOULD_TRIGGER_RECOVERY=true
+            RECOVERY_REASON="manually_forced"
+          elif [ "$OVERALL_HEALTH" = "unhealthy" ]; then
+            echo "🚨 Health check failed - recovery needed"
+            SHOULD_TRIGGER_RECOVERY=true
+            RECOVERY_REASON="health_check_failed"
+          elif [ "$OVERALL_HEALTH" = "degraded" ]; then
+            echo "⚠️  Service degraded - considering recovery"
+            
+            # Check if degraded state persists
+            HEALTH_HISTORY=$(gh variable get HEALTH_CHECK_HISTORY --repo ${{ github.repository }} 2>/dev/null || echo "[]")
+            
+            CONSECUTIVE_DEGRADED=$(python3 -c "
+import json
+try:
+    history = json.loads('$HEALTH_HISTORY')
+    consecutive = 0
+    for result in reversed(history):
+        if result['status'] in ['degraded', 'unhealthy']:
+            consecutive += 1
+        else:
+            break
+    print(consecutive)
+except:
+    print(0)
+")
+            
+            echo "Consecutive degraded/unhealthy checks: $CONSECUTIVE_DEGRADED"
+            
+            if [ "$CONSECUTIVE_DEGRADED" -ge 3 ]; then
+              echo "🔧 Persistent degradation detected - triggering recovery"
+              SHOULD_TRIGGER_RECOVERY=true
+              RECOVERY_REASON="persistent_degradation"
+            else
+              echo "ℹ️  Degradation not persistent enough for recovery"
+            fi
+          else
+            echo "✅ Health check passed - no recovery needed"
+          fi
+          
+          # Check circuit breaker status
+          CIRCUIT_BREAKER_STATUS=$(gh variable get CIRCUIT_BREAKER_STATUS --repo ${{ github.repository }} 2>/dev/null || echo "closed")
+          
+          if [ "$SHOULD_TRIGGER_RECOVERY" = true ] && [ "$CIRCUIT_BREAKER_STATUS" = "open" ]; then
+            echo "🚫 Circuit breaker is open - recovery blocked"
+            SHOULD_TRIGGER_RECOVERY=false
+            RECOVERY_REASON="circuit_breaker_open"
+          fi
+          
+          echo "SHOULD_TRIGGER_RECOVERY=$SHOULD_TRIGGER_RECOVERY" >> $GITHUB_OUTPUT
+          echo "RECOVERY_REASON=$RECOVERY_REASON" >> $GITHUB_OUTPUT
+          
+          # Record recovery evaluation
+          gh variable set LAST_RECOVERY_EVALUATION --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }}
+          gh variable set LAST_RECOVERY_DECISION --body "$SHOULD_TRIGGER_RECOVERY" --repo ${{ github.repository }}
+          gh variable set LAST_RECOVERY_REASON --body "$RECOVERY_REASON" --repo ${{ github.repository }}
+          
+          if [ "$SHOULD_TRIGGER_RECOVERY" = true ]; then
+            echo "🔧 Recovery will be triggered: $RECOVERY_REASON"
+          else
+            echo "ℹ️  No recovery action needed: $RECOVERY_REASON"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Trigger recovery workflow
+        if: steps.recovery_evaluation.outputs.SHOULD_TRIGGER_RECOVERY == 'true'
+        run: |
+          echo "🚀 Triggering recovery workflow..."
+          
+          RECOVERY_REASON="${{ steps.recovery_evaluation.outputs.RECOVERY_REASON }}"
+          OVERALL_HEALTH="${{ steps.health_checks.outputs.OVERALL_HEALTH }}"
+          
+          # Clear any pending recovery triggers since we now have the workflow
+          gh variable delete PENDING_RECOVERY_TRIGGER --repo ${{ github.repository }} 2>/dev/null || true
+          gh variable delete PENDING_RECOVERY_REASON --repo ${{ github.repository }} 2>/dev/null || true
+          gh variable delete PENDING_RECOVERY_HEALTH_STATUS --repo ${{ github.repository }} 2>/dev/null || true
+          gh variable delete PENDING_RECOVERY_TIMESTAMP --repo ${{ github.repository }} 2>/dev/null || true
+          
+          # Trigger recovery workflow
+          gh workflow run recovery.yml \
+            --repo ${{ github.repository }} \
+            --field health_status="$OVERALL_HEALTH" \
+            --field recovery_reason="$RECOVERY_REASON" \
+            --field monitoring_session_id="$MONITORING_SESSION_ID" \
+            --field triggered_by="health_monitor"
+          
+          if [ $? -eq 0 ]; then
+            echo "✅ Recovery workflow triggered successfully"
+            
+            # Record recovery trigger
+            gh variable set LAST_RECOVERY_TRIGGER --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }}
+            gh variable set LAST_RECOVERY_TRIGGER_REASON --body "$RECOVERY_REASON" --repo ${{ github.repository }}
+          else
+            echo "❌ Failed to trigger recovery workflow"
+            
+            # Record failure
+            gh variable set LAST_RECOVERY_TRIGGER_FAILURE --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }}
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Generate health monitoring summary
+        if: always()
+        run: |
+          echo "📋 Generating health monitoring summary..."
+          
+          OVERALL_HEALTH="${{ steps.health_checks.outputs.OVERALL_HEALTH }}"
+          HEALTH_DETAILS="${{ steps.health_checks.outputs.HEALTH_DETAILS }}"
+          SHOULD_TRIGGER_RECOVERY="${{ steps.recovery_evaluation.outputs.SHOULD_TRIGGER_RECOVERY }}"
+          RECOVERY_REASON="${{ steps.recovery_evaluation.outputs.RECOVERY_REASON }}"
+          
+          # Create comprehensive summary
+          echo "## 🏥 Continuous Health Monitoring Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Monitoring Session" >> $GITHUB_STEP_SUMMARY
+          echo "- **Session ID**: \`$MONITORING_SESSION_ID\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Timestamp**: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Deployed Artifact**: \`${DEPLOYED_DIGEST:-'none'}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "### Health Check Results" >> $GITHUB_STEP_SUMMARY
+          
+          # Overall status with emoji
+          case "$OVERALL_HEALTH" in
+            "healthy")
+              echo "- **Overall Status**: ✅ **HEALTHY**" >> $GITHUB_STEP_SUMMARY
+              ;;
+            "degraded")
+              echo "- **Overall Status**: ⚠️  **DEGRADED**" >> $GITHUB_STEP_SUMMARY
+              ;;
+            "unhealthy")
+              echo "- **Overall Status**: ❌ **UNHEALTHY**" >> $GITHUB_STEP_SUMMARY
+              ;;
+            *)
+              echo "- **Overall Status**: ❓ **UNKNOWN**" >> $GITHUB_STEP_SUMMARY
+              ;;
+          esac
+          
+          echo "- **Details**: $HEALTH_DETAILS" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Individual check results
+          echo "### Individual Check Results" >> $GITHUB_STEP_SUMMARY
+          
+          SERVICE_AVAILABLE="${{ steps.health_checks.outputs.SERVICE_AVAILABLE }}"
+          FUNCTIONALITY_OK="${{ steps.health_checks.outputs.FUNCTIONALITY_OK }}"
+          CONTAINER_HEALTHY="${{ steps.health_checks.outputs.CONTAINER_HEALTHY }}"
+          
+          echo "- **Service Availability**: $([ "$SERVICE_AVAILABLE" = "true" ] && echo "✅ Available" || echo "❌ Unavailable")" >> $GITHUB_STEP_SUMMARY
+          echo "- **Basic Functionality**: $([ "$FUNCTIONALITY_OK" = "true" ] && echo "✅ Working" || echo "❌ Failed")" >> $GITHUB_STEP_SUMMARY
+          echo "- **Container Health**: $([ "$CONTAINER_HEALTHY" = "true" ] && echo "✅ Healthy" || echo "❌ Unhealthy")" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Recovery evaluation
+          echo "### Recovery Evaluation" >> $GITHUB_STEP_SUMMARY
+          echo "- **Recovery Needed**: $([ "$SHOULD_TRIGGER_RECOVERY" = "true" ] && echo "✅ Yes" || echo "❌ No")" >> $GITHUB_STEP_SUMMARY
+          echo "- **Reason**: $RECOVERY_REASON" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "$SHOULD_TRIGGER_RECOVERY" = "true" ]; then
+            echo "- **Action**: Recovery workflow triggered" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "*🔄 Next health check scheduled in 5 minutes*" >> $GITHUB_STEP_SUMMARY
+          
+          echo "✅ Health monitoring summary generated"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Cleanup monitoring session
+        if: always()
+        run: |
+          echo "🧹 Cleaning up monitoring session..."
+          
+          # Clear session variables
+          gh variable delete HEALTH_MONITORING_SESSION --repo ${{ github.repository }} 2>/dev/null || true
+          
+          # Update last completed monitoring session
+          gh variable set LAST_COMPLETED_HEALTH_CHECK --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }}
+          gh variable set LAST_COMPLETED_SESSION_ID --body "$MONITORING_SESSION_ID" --repo ${{ github.repository }}
+          
+          echo "✅ Monitoring session cleanup completed"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

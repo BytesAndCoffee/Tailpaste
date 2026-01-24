@@ -1,0 +1,865 @@
+name: Recovery and Redeployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      health_status:
+        description: 'Current health status that triggered recovery'
+        required: true
+        type: choice
+        options:
+          - unhealthy
+          - degraded
+          - unknown
+        default: unhealthy
+      recovery_reason:
+        description: 'Reason for recovery action'
+        required: true
+        type: choice
+        options:
+          - health_check_failed
+          - persistent_degradation
+          - manually_forced
+          - service_unavailable
+          - functionality_failed
+        default: health_check_failed
+      monitoring_session_id:
+        description: 'Health monitoring session ID that triggered recovery'
+        required: false
+        type: string
+      triggered_by:
+        description: 'What triggered this recovery'
+        required: false
+        type: string
+        default: manual
+      skip_recovery_actions:
+        description: 'Skip recovery actions and go directly to redeployment evaluation'
+        required: false
+        type: boolean
+        default: false
+      force_redeployment:
+        description: 'Force redeployment even if recovery succeeds'
+        required: false
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      health_status:
+        description: 'Current health status that triggered recovery'
+        required: true
+        type: string
+      recovery_reason:
+        description: 'Reason for recovery action'
+        required: true
+        type: string
+      monitoring_session_id:
+        description: 'Health monitoring session ID that triggered recovery'
+        required: false
+        type: string
+      triggered_by:
+        description: 'What triggered this recovery'
+        required: false
+        type: string
+        default: automated
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  recovery:
+    name: Recovery and Redeployment Logic
+    runs-on:
+      - tailpaste-runners
+    
+    # Prevent concurrent recovery operations
+    concurrency:
+      group: recovery-operations
+      cancel-in-progress: false
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+          ping: docker.tailfa875.ts.net
+      
+      - name: Initialize recovery session
+        run: |
+          echo "🔧 Initializing recovery session..."
+          
+          RECOVERY_SESSION_ID="recovery-$(date +%Y%m%d-%H%M%S)-$(openssl rand -hex 4)"
+          HEALTH_STATUS="${{ inputs.health_status }}"
+          RECOVERY_REASON="${{ inputs.recovery_reason }}"
+          MONITORING_SESSION="${{ inputs.monitoring_session_id }}"
+          TRIGGERED_BY="${{ inputs.triggered_by }}"
+          
+          echo "RECOVERY_SESSION_ID=$RECOVERY_SESSION_ID" >> $GITHUB_ENV
+          echo "HEALTH_STATUS=$HEALTH_STATUS" >> $GITHUB_ENV
+          echo "RECOVERY_REASON=$RECOVERY_REASON" >> $GITHUB_ENV
+          echo "MONITORING_SESSION=$MONITORING_SESSION" >> $GITHUB_ENV
+          echo "TRIGGERED_BY=$TRIGGERED_BY" >> $GITHUB_ENV
+          
+          # Get current deployment state
+          DEPLOYED_DIGEST=$(gh variable get DEPLOYED_ARTIFACT_DIGEST --repo ${{ github.repository }} 2>/dev/null || echo "")
+          DEPLOYMENT_STATUS=$(gh variable get DEPLOYMENT_STATUS --repo ${{ github.repository }} 2>/dev/null || echo "unknown")
+          
+          echo "DEPLOYED_DIGEST=$DEPLOYED_DIGEST" >> $GITHUB_ENV
+          echo "DEPLOYMENT_STATUS=$DEPLOYMENT_STATUS" >> $GITHUB_ENV
+          
+          # Record recovery session start
+          gh variable set RECOVERY_SESSION_ID --body "$RECOVERY_SESSION_ID" --repo ${{ github.repository }}
+          gh variable set RECOVERY_START_TIME --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }}
+          gh variable set RECOVERY_TRIGGERED_BY --body "$TRIGGERED_BY" --repo ${{ github.repository }}
+          gh variable set RECOVERY_REASON --body "$RECOVERY_REASON" --repo ${{ github.repository }}
+          
+          echo "✅ Recovery session initialized: $RECOVERY_SESSION_ID"
+          echo "📊 Current state:"
+          echo "  - Health Status: $HEALTH_STATUS"
+          echo "  - Recovery Reason: $RECOVERY_REASON"
+          echo "  - Deployed Artifact: ${DEPLOYED_DIGEST:-'none'}"
+          echo "  - Deployment Status: $DEPLOYMENT_STATUS"
+          echo "  - Triggered By: $TRIGGERED_BY"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Check circuit breaker status
+        id: circuit_breaker_check
+        run: |
+          echo "🔍 Checking circuit breaker status..."
+          
+          # Get circuit breaker state
+          CIRCUIT_BREAKER_STATUS=$(gh variable get CIRCUIT_BREAKER_STATUS --repo ${{ github.repository }} 2>/dev/null || echo "closed")
+          FAILURE_COUNT=$(gh variable get RECOVERY_FAILURE_COUNT --repo ${{ github.repository }} 2>/dev/null || echo "0")
+          FAILURE_THRESHOLD=$(gh variable get CIRCUIT_BREAKER_THRESHOLD --repo ${{ github.repository }} 2>/dev/null || echo "3")
+          LAST_FAILURE_TIME=$(gh variable get LAST_RECOVERY_FAILURE_TIME --repo ${{ github.repository }} 2>/dev/null || echo "")
+          
+          echo "Circuit breaker status: $CIRCUIT_BREAKER_STATUS"
+          echo "Failure count: $FAILURE_COUNT"
+          echo "Failure threshold: $FAILURE_THRESHOLD"
+          echo "Last failure: ${LAST_FAILURE_TIME:-'none'}"
+          
+          CIRCUIT_BREAKER_OPEN=false
+          
+          # Check if circuit breaker should be open
+          if [ "$CIRCUIT_BREAKER_STATUS" = "open" ]; then
+            echo "🚫 Circuit breaker is already open"
+            CIRCUIT_BREAKER_OPEN=true
+          elif [ "$FAILURE_COUNT" -ge "$FAILURE_THRESHOLD" ]; then
+            echo "🚫 Failure count ($FAILURE_COUNT) exceeds threshold ($FAILURE_THRESHOLD)"
+            echo "🔴 Opening circuit breaker"
+            
+            # Open circuit breaker
+            gh variable set CIRCUIT_BREAKER_STATUS --body "open" --repo ${{ github.repository }}
+            gh variable set CIRCUIT_BREAKER_OPENED_AT --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }}
+            gh variable set CIRCUIT_BREAKER_OPENED_BY --body "$RECOVERY_SESSION_ID" --repo ${{ github.repository }}
+            
+            CIRCUIT_BREAKER_OPEN=true
+          else
+            echo "✅ Circuit breaker is closed - recovery can proceed"
+          fi
+          
+          echo "CIRCUIT_BREAKER_OPEN=$CIRCUIT_BREAKER_OPEN" >> $GITHUB_OUTPUT
+          echo "FAILURE_COUNT=$FAILURE_COUNT" >> $GITHUB_OUTPUT
+          echo "FAILURE_THRESHOLD=$FAILURE_THRESHOLD" >> $GITHUB_OUTPUT
+          
+          if [ "$CIRCUIT_BREAKER_OPEN" = "true" ]; then
+            echo "🚨 Circuit breaker is open - manual intervention required"
+            echo "Recovery and redeployment actions are blocked"
+            
+            # Record circuit breaker activation
+            gh variable set LAST_CIRCUIT_BREAKER_TRIGGER --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }}
+            gh variable set CIRCUIT_BREAKER_TRIGGER_REASON --body "$RECOVERY_REASON" --repo ${{ github.repository }}
+            
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Execute non-destructive recovery actions
+        id: recovery_actions
+        if: steps.circuit_breaker_check.outputs.CIRCUIT_BREAKER_OPEN != 'true' && inputs.skip_recovery_actions != true
+        run: |
+          echo "🔧 Executing non-destructive recovery actions..."
+          
+          RECOVERY_SUCCESS=false
+          RECOVERY_ACTIONS_PERFORMED=()
+          RECOVERY_DETAILS=""
+          
+          # Record recovery attempt start
+          if [ -n "$DEPLOYED_DIGEST" ]; then
+            python scripts/artifact_manager.py record-test-result \
+              --digest "$DEPLOYED_DIGEST" \
+              --test-type "recovery_attempt" \
+              --status "pending" \
+              --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              --details "Starting non-destructive recovery actions for reason: $RECOVERY_REASON"
+          fi
+          
+          echo "🔄 Recovery Action 1: Container restart (non-destructive)"
+          
+          # Container restart - this doesn't change the deployed artifact
+          ssh -o StrictHostKeyChecking=no michael@docker << 'EOF'
+            set -e
+            cd ~/Tailpaste
+            
+            echo "📊 Checking current container state..."
+            CONTAINER_STATUS=$(docker inspect --format='{{.State.Status}}' tailpaste 2>/dev/null || echo "not_found")
+            echo "Current container status: $CONTAINER_STATUS"
+            
+            if [ "$CONTAINER_STATUS" = "running" ]; then
+              echo "🔄 Restarting container (preserving artifact)..."
+              docker restart tailpaste
+              
+              echo "⏳ Waiting for container to stabilize..."
+              sleep 10
+              
+              # Verify container is running
+              NEW_STATUS=$(docker inspect --format='{{.State.Status}}' tailpaste 2>/dev/null || echo "not_found")
+              if [ "$NEW_STATUS" = "running" ]; then
+                echo "✅ Container restart successful"
+                exit 0
+              else
+                echo "❌ Container restart failed - status: $NEW_STATUS"
+                exit 1
+              fi
+            elif [ "$CONTAINER_STATUS" = "exited" ] || [ "$CONTAINER_STATUS" = "stopped" ]; then
+              echo "🚀 Starting stopped container..."
+              docker start tailpaste
+              
+              echo "⏳ Waiting for container to start..."
+              sleep 10
+              
+              NEW_STATUS=$(docker inspect --format='{{.State.Status}}' tailpaste 2>/dev/null || echo "not_found")
+              if [ "$NEW_STATUS" = "running" ]; then
+                echo "✅ Container start successful"
+                exit 0
+              else
+                echo "❌ Container start failed - status: $NEW_STATUS"
+                exit 1
+              fi
+            else
+              echo "⚠️  Container in unexpected state: $CONTAINER_STATUS"
+              echo "Attempting to recreate container with same image..."
+              
+              # Get current image
+              CURRENT_IMAGE=$(docker inspect --format='{{.Config.Image}}' tailpaste 2>/dev/null || echo "")
+              
+              if [ -n "$CURRENT_IMAGE" ]; then
+                echo "Current image: $CURRENT_IMAGE"
+                
+                # Stop and remove container, then recreate with same image
+                docker stop tailpaste 2>/dev/null || true
+                docker rm tailpaste 2>/dev/null || true
+                
+                # Recreate using docker-compose (preserves configuration)
+                docker compose -f docker-compose.yml up -d
+                
+                echo "⏳ Waiting for recreated container..."
+                sleep 15
+                
+                NEW_STATUS=$(docker inspect --format='{{.State.Status}}' tailpaste 2>/dev/null || echo "not_found")
+                if [ "$NEW_STATUS" = "running" ]; then
+                  echo "✅ Container recreation successful"
+                  exit 0
+                else
+                  echo "❌ Container recreation failed - status: $NEW_STATUS"
+                  exit 1
+                fi
+              else
+                echo "❌ Could not determine current image"
+                exit 1
+              fi
+            fi
+          EOF
+          
+          if [ $? -eq 0 ]; then
+            echo "✅ Container restart/recreation successful"
+            RECOVERY_ACTIONS_PERFORMED+=("container_restart")
+          else
+            echo "❌ Container restart/recreation failed"
+          fi
+          
+          echo ""
+          echo "🧹 Recovery Action 2: Cache clearing (non-destructive)"
+          
+          # Cache clearing - doesn't change artifacts
+          ssh -o StrictHostKeyChecking=no michael@docker << 'EOF'
+            set -e
+            cd ~/Tailpaste
+            
+            echo "🗑️  Clearing Docker system cache..."
+            docker system prune -f --volumes=false 2>/dev/null || true
+            
+            echo "🗑️  Clearing application cache (if any)..."
+            # Clear any application-level caches without affecting data
+            docker exec tailpaste find /tmp -type f -name "*.cache" -delete 2>/dev/null || true
+            docker exec tailpaste find /tmp -type f -name "*.tmp" -delete 2>/dev/null || true
+            
+            echo "✅ Cache clearing completed"
+          EOF
+          
+          if [ $? -eq 0 ]; then
+            echo "✅ Cache clearing successful"
+            RECOVERY_ACTIONS_PERFORMED+=("cache_clear")
+          else
+            echo "⚠️  Cache clearing had issues (non-critical)"
+          fi
+          
+          echo ""
+          echo "🔄 Recovery Action 3: Network connectivity reset (non-destructive)"
+          
+          # Network reset - doesn't change artifacts
+          ssh -o StrictHostKeyChecking=no michael@docker << 'EOF'
+            set -e
+            cd ~/Tailpaste
+            
+            echo "🌐 Checking and resetting network connectivity..."
+            
+            # Restart Tailscale in container if possible
+            docker exec tailpaste tailscale down 2>/dev/null || true
+            sleep 2
+            docker exec tailpaste tailscale up 2>/dev/null || true
+            
+            # Restart Docker networking for the container
+            NETWORK_NAME=$(docker inspect tailpaste --format='{{range $net, $conf := .NetworkSettings.Networks}}{{$net}}{{end}}' 2>/dev/null || echo "")
+            
+            if [ -n "$NETWORK_NAME" ] && [ "$NETWORK_NAME" != "bridge" ]; then
+              echo "Reconnecting to network: $NETWORK_NAME"
+              docker network disconnect "$NETWORK_NAME" tailpaste 2>/dev/null || true
+              sleep 1
+              docker network connect "$NETWORK_NAME" tailpaste 2>/dev/null || true
+            fi
+            
+            echo "✅ Network connectivity reset completed"
+          EOF
+          
+          if [ $? -eq 0 ]; then
+            echo "✅ Network reset successful"
+            RECOVERY_ACTIONS_PERFORMED+=("network_reset")
+          else
+            echo "⚠️  Network reset had issues (non-critical)"
+          fi
+          
+          # Summarize recovery actions
+          if [ ${#RECOVERY_ACTIONS_PERFORMED[@]} -gt 0 ]; then
+            RECOVERY_DETAILS="Recovery actions performed: $(IFS=', '; echo "${RECOVERY_ACTIONS_PERFORMED[*]}")"
+            echo "📋 $RECOVERY_DETAILS"
+          else
+            RECOVERY_DETAILS="No recovery actions completed successfully"
+            echo "❌ $RECOVERY_DETAILS"
+          fi
+          
+          echo "RECOVERY_ACTIONS_PERFORMED=${RECOVERY_ACTIONS_PERFORMED[*]}" >> $GITHUB_OUTPUT
+          echo "RECOVERY_DETAILS=$RECOVERY_DETAILS" >> $GITHUB_OUTPUT
+          
+          # Record recovery actions completion
+          if [ -n "$DEPLOYED_DIGEST" ]; then
+            python scripts/artifact_manager.py record-test-result \
+              --digest "$DEPLOYED_DIGEST" \
+              --test-type "recovery_actions" \
+              --status "completed" \
+              --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              --details "$RECOVERY_DETAILS"
+          fi
+          
+          echo "✅ Non-destructive recovery actions completed"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Re-run health checks after recovery
+        id: post_recovery_health
+        if: steps.circuit_breaker_check.outputs.CIRCUIT_BREAKER_OPEN != 'true' && inputs.skip_recovery_actions != true
+        run: |
+          echo "🏥 Re-running health checks after recovery actions..."
+          
+          # Wait a moment for services to stabilize
+          echo "⏳ Waiting for services to stabilize after recovery..."
+          sleep 30
+          
+          # Run health checks
+          if python3 scripts/health_check.py --json --export /tmp/post_recovery_health.json; then
+            echo "✅ Post-recovery health check completed"
+            POST_RECOVERY_SUCCESS=true
+          else
+            echo "❌ Post-recovery health check failed"
+            POST_RECOVERY_SUCCESS=false
+          fi
+          
+          # Parse results
+          if [ -f "/tmp/post_recovery_health.json" ]; then
+            POST_RECOVERY_STATUS=$(python3 -c "import json; data=json.load(open('/tmp/post_recovery_health.json')); print(data['overall_status'])")
+            POST_RECOVERY_DETAILS=$(python3 -c "import json; data=json.load(open('/tmp/post_recovery_health.json')); print(data.get('health_details', 'Post-recovery health check completed'))")
+            
+            echo "Post-recovery health status: $POST_RECOVERY_STATUS"
+            echo "Details: $POST_RECOVERY_DETAILS"
+          else
+            POST_RECOVERY_STATUS="unknown"
+            POST_RECOVERY_DETAILS="Health check results not available"
+          fi
+          
+          echo "POST_RECOVERY_SUCCESS=$POST_RECOVERY_SUCCESS" >> $GITHUB_OUTPUT
+          echo "POST_RECOVERY_STATUS=$POST_RECOVERY_STATUS" >> $GITHUB_OUTPUT
+          echo "POST_RECOVERY_DETAILS=$POST_RECOVERY_DETAILS" >> $GITHUB_OUTPUT
+          
+          # Record post-recovery health check
+          if [ -n "$DEPLOYED_DIGEST" ]; then
+            python scripts/artifact_manager.py record-test-result \
+              --digest "$DEPLOYED_DIGEST" \
+              --test-type "post_recovery_health_check" \
+              --status "$POST_RECOVERY_STATUS" \
+              --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              --details "Post-recovery health check: $POST_RECOVERY_DETAILS"
+          fi
+          
+          # Update system health status
+          gh variable set LAST_HEALTH_CHECK_STATUS --body "$POST_RECOVERY_STATUS" --repo ${{ github.repository }}
+          gh variable set LAST_HEALTH_CHECK_TIME --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }}
+          gh variable set POST_RECOVERY_HEALTH_STATUS --body "$POST_RECOVERY_STATUS" --repo ${{ github.repository }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Evaluate recovery success
+        id: recovery_evaluation
+        if: steps.circuit_breaker_check.outputs.CIRCUIT_BREAKER_OPEN != 'true'
+        run: |
+          echo "📊 Evaluating recovery success..."
+          
+          SKIP_RECOVERY="${{ inputs.skip_recovery_actions }}"
+          FORCE_REDEPLOYMENT="${{ inputs.force_redeployment }}"
+          POST_RECOVERY_SUCCESS="${{ steps.post_recovery_health.outputs.POST_RECOVERY_SUCCESS }}"
+          POST_RECOVERY_STATUS="${{ steps.post_recovery_health.outputs.POST_RECOVERY_STATUS }}"
+          
+          RECOVERY_SUCCESSFUL=false
+          SHOULD_REDEPLOY=false
+          EVALUATION_REASON=""
+          
+          if [ "$SKIP_RECOVERY" = "true" ]; then
+            echo "⏭️  Recovery actions were skipped - proceeding to redeployment evaluation"
+            SHOULD_REDEPLOY=true
+            EVALUATION_REASON="recovery_skipped"
+          elif [ "$FORCE_REDEPLOYMENT" = "true" ]; then
+            echo "🔧 Redeployment forced by input - ignoring recovery results"
+            SHOULD_REDEPLOY=true
+            EVALUATION_REASON="redeployment_forced"
+          elif [ "$POST_RECOVERY_SUCCESS" = "true" ] && [ "$POST_RECOVERY_STATUS" = "healthy" ]; then
+            echo "✅ Recovery successful - service is now healthy"
+            RECOVERY_SUCCESSFUL=true
+            EVALUATION_REASON="recovery_successful"
+          elif [ "$POST_RECOVERY_STATUS" = "degraded" ]; then
+            echo "⚠️  Recovery partially successful - service is degraded"
+            echo "Considering redeployment to fully restore service"
+            SHOULD_REDEPLOY=true
+            EVALUATION_REASON="service_still_degraded"
+          else
+            echo "❌ Recovery failed - service is still unhealthy"
+            echo "Proceeding to redeployment evaluation"
+            SHOULD_REDEPLOY=true
+            EVALUATION_REASON="recovery_failed"
+          fi
+          
+          echo "RECOVERY_SUCCESSFUL=$RECOVERY_SUCCESSFUL" >> $GITHUB_OUTPUT
+          echo "SHOULD_REDEPLOY=$SHOULD_REDEPLOY" >> $GITHUB_OUTPUT
+          echo "EVALUATION_REASON=$EVALUATION_REASON" >> $GITHUB_OUTPUT
+          
+          # Record recovery evaluation
+          gh variable set RECOVERY_SUCCESSFUL --body "$RECOVERY_SUCCESSFUL" --repo ${{ github.repository }}
+          gh variable set RECOVERY_EVALUATION_TIME --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }}
+          gh variable set RECOVERY_EVALUATION_REASON --body "$EVALUATION_REASON" --repo ${{ github.repository }}
+          
+          if [ "$RECOVERY_SUCCESSFUL" = "true" ]; then
+            echo "🎉 Recovery completed successfully - no further action needed"
+            
+            # Reset failure count on successful recovery
+            gh variable set RECOVERY_FAILURE_COUNT --body "0" --repo ${{ github.repository }}
+            
+            # Record successful recovery
+            if [ -n "$DEPLOYED_DIGEST" ]; then
+              python scripts/artifact_manager.py record-test-result \
+                --digest "$DEPLOYED_DIGEST" \
+                --test-type "recovery" \
+                --status "successful" \
+                --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                --details "Recovery successful: $EVALUATION_REASON"
+            fi
+          else
+            echo "🔄 Recovery evaluation: $EVALUATION_REASON"
+            
+            if [ "$SHOULD_REDEPLOY" = "true" ]; then
+              echo "➡️  Proceeding to redeployment evaluation"
+            fi
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Evaluate redeployment conditions
+        id: redeployment_evaluation
+        if: steps.recovery_evaluation.outputs.SHOULD_REDEPLOY == 'true' && steps.circuit_breaker_check.outputs.CIRCUIT_BREAKER_OPEN != 'true'
+        run: |
+          echo "🔍 Evaluating redeployment conditions..."
+          
+          # Get current deployment state
+          CURRENT_DEPLOYED_DIGEST="$DEPLOYED_DIGEST"
+          
+          # Find the most recent deployable artifact that's different from current
+          echo "🔍 Finding candidate artifact for redeployment..."
+          
+          # Get list of recent deployable artifacts
+          CANDIDATE_DIGEST=""
+          
+          # Try to get the most recent deployable artifact from artifact manager
+          # This is a simplified approach - in a real system you might want more sophisticated logic
+          
+          # For now, we'll look for the backup artifact as a candidate
+          BACKUP_DIGEST=$(gh variable get BACKUP_ARTIFACT_DIGEST --repo ${{ github.repository }} 2>/dev/null || echo "")
+          
+          if [ -n "$BACKUP_DIGEST" ] && [ "$BACKUP_DIGEST" != "$CURRENT_DEPLOYED_DIGEST" ]; then
+            echo "📦 Found backup artifact as candidate: $BACKUP_DIGEST"
+            
+            # Verify the backup artifact is still deployable
+            if python scripts/artifact_manager.py validate-digest --digest "$BACKUP_DIGEST" --registry ${{ env.REGISTRY }} --repository ${{ env.IMAGE_NAME }}; then
+              CANDIDATE_DIGEST="$BACKUP_DIGEST"
+              CANDIDATE_SOURCE="backup"
+              echo "✅ Backup artifact is valid and available"
+            else
+              echo "❌ Backup artifact is not available or invalid"
+            fi
+          fi
+          
+          # If no backup, try to find another recent deployable artifact
+          if [ -z "$CANDIDATE_DIGEST" ]; then
+            echo "🔍 Looking for other deployable artifacts..."
+            
+            # This would typically query your artifact management system
+            # For now, we'll indicate that no suitable candidate was found
+            echo "⚠️  No alternative deployable artifact found"
+            echo "This could indicate:"
+            echo "  - Only one artifact has been deployed"
+            echo "  - No recent successful builds"
+            echo "  - Artifact management system needs more sophisticated candidate selection"
+          fi
+          
+          SHOULD_REDEPLOY=false
+          REDEPLOYMENT_REASON=""
+          
+          if [ -z "$CANDIDATE_DIGEST" ]; then
+            echo "❌ No suitable candidate artifact for redeployment"
+            SHOULD_REDEPLOY=false
+            REDEPLOYMENT_REASON="no_candidate_artifact"
+          elif [ "$CANDIDATE_DIGEST" = "$CURRENT_DEPLOYED_DIGEST" ]; then
+            echo "⚠️  Candidate artifact is the same as currently deployed"
+            echo "Redeployment would not change anything"
+            SHOULD_REDEPLOY=false
+            REDEPLOYMENT_REASON="same_artifact"
+          else
+            echo "✅ Found suitable candidate for redeployment"
+            echo "  Current: ${CURRENT_DEPLOYED_DIGEST:-'none'}"
+            echo "  Candidate: $CANDIDATE_DIGEST"
+            SHOULD_REDEPLOY=true
+            REDEPLOYMENT_REASON="candidate_found"
+          fi
+          
+          echo "SHOULD_REDEPLOY=$SHOULD_REDEPLOY" >> $GITHUB_OUTPUT
+          echo "CANDIDATE_DIGEST=$CANDIDATE_DIGEST" >> $GITHUB_OUTPUT
+          echo "CANDIDATE_SOURCE=$CANDIDATE_SOURCE" >> $GITHUB_OUTPUT
+          echo "REDEPLOYMENT_REASON=$REDEPLOYMENT_REASON" >> $GITHUB_OUTPUT
+          
+          # Record redeployment evaluation
+          gh variable set REDEPLOYMENT_EVALUATION_TIME --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }}
+          gh variable set REDEPLOYMENT_CANDIDATE --body "$CANDIDATE_DIGEST" --repo ${{ github.repository }}
+          gh variable set REDEPLOYMENT_REASON --body "$REDEPLOYMENT_REASON" --repo ${{ github.repository }}
+          
+          if [ "$SHOULD_REDEPLOY" = "true" ]; then
+            echo "🚀 Redeployment will proceed with candidate: $CANDIDATE_DIGEST"
+          else
+            echo "⏹️  Redeployment will not proceed: $REDEPLOYMENT_REASON"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Execute redeployment
+        id: redeployment
+        if: steps.redeployment_evaluation.outputs.SHOULD_REDEPLOY == 'true' && steps.circuit_breaker_check.outputs.CIRCUIT_BREAKER_OPEN != 'true'
+        run: |
+          echo "🚀 Executing redeployment..."
+          
+          CANDIDATE_DIGEST="${{ steps.redeployment_evaluation.outputs.CANDIDATE_DIGEST }}"
+          CANDIDATE_SOURCE="${{ steps.redeployment_evaluation.outputs.CANDIDATE_SOURCE }}"
+          
+          echo "Redeploying to artifact: $CANDIDATE_DIGEST (source: $CANDIDATE_SOURCE)"
+          
+          # Record redeployment attempt
+          python scripts/artifact_manager.py record-test-result \
+            --digest "$CANDIDATE_DIGEST" \
+            --test-type "redeployment_attempt" \
+            --status "pending" \
+            --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --details "Redeployment attempt triggered by recovery workflow: $RECOVERY_REASON"
+          
+          # Trigger deployment workflow with the candidate artifact
+          echo "🔄 Triggering deployment workflow..."
+          
+          gh workflow run deploy.yml \
+            --repo ${{ github.repository }} \
+            --field artifact_digest="$CANDIDATE_DIGEST" \
+            --field rollback=false
+          
+          if [ $? -eq 0 ]; then
+            echo "✅ Deployment workflow triggered successfully"
+            REDEPLOYMENT_TRIGGERED=true
+            
+            # Record redeployment trigger
+            gh variable set LAST_REDEPLOYMENT_TRIGGER --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }}
+            gh variable set LAST_REDEPLOYMENT_ARTIFACT --body "$CANDIDATE_DIGEST" --repo ${{ github.repository }}
+            gh variable set LAST_REDEPLOYMENT_REASON --body "$RECOVERY_REASON" --repo ${{ github.repository }}
+            
+            # Wait a moment and check if deployment started
+            echo "⏳ Waiting for deployment to start..."
+            sleep 10
+            
+            # Check if deployment is in progress
+            DEPLOYMENT_IN_PROGRESS=$(gh variable get DEPLOYMENT_IN_PROGRESS --repo ${{ github.repository }} 2>/dev/null || echo "false")
+            
+            if [ "$DEPLOYMENT_IN_PROGRESS" = "true" ]; then
+              echo "✅ Deployment is in progress"
+              echo "🔍 Monitor the deployment workflow for results"
+            else
+              echo "⚠️  Deployment may not have started - check deployment workflow"
+            fi
+            
+          else
+            echo "❌ Failed to trigger deployment workflow"
+            REDEPLOYMENT_TRIGGERED=false
+            
+            # Record redeployment failure
+            python scripts/artifact_manager.py record-test-result \
+              --digest "$CANDIDATE_DIGEST" \
+              --test-type "redeployment_attempt" \
+              --status "failed" \
+              --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              --details "Failed to trigger deployment workflow"
+          fi
+          
+          echo "REDEPLOYMENT_TRIGGERED=$REDEPLOYMENT_TRIGGERED" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Handle recovery failure and circuit breaker
+        if: failure() || (steps.recovery_evaluation.outputs.RECOVERY_SUCCESSFUL != 'true' && steps.redeployment_evaluation.outputs.SHOULD_REDEPLOY != 'true')
+        run: |
+          echo "❌ Recovery workflow failed or no recovery path available"
+          
+          # Increment failure count
+          CURRENT_FAILURE_COUNT="${{ steps.circuit_breaker_check.outputs.FAILURE_COUNT }}"
+          NEW_FAILURE_COUNT=$((CURRENT_FAILURE_COUNT + 1))
+          
+          echo "Incrementing failure count: $CURRENT_FAILURE_COUNT -> $NEW_FAILURE_COUNT"
+          
+          # Update failure tracking
+          gh variable set RECOVERY_FAILURE_COUNT --body "$NEW_FAILURE_COUNT" --repo ${{ github.repository }}
+          gh variable set LAST_RECOVERY_FAILURE_TIME --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }}
+          gh variable set LAST_RECOVERY_FAILURE_REASON --body "$RECOVERY_REASON" --repo ${{ github.repository }}
+          gh variable set LAST_RECOVERY_FAILURE_SESSION --body "$RECOVERY_SESSION_ID" --repo ${{ github.repository }}
+          
+          # Record failure in artifact manager
+          if [ -n "$DEPLOYED_DIGEST" ]; then
+            python scripts/artifact_manager.py record-test-result \
+              --digest "$DEPLOYED_DIGEST" \
+              --test-type "recovery" \
+              --status "failed" \
+              --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              --details "Recovery workflow failed: $RECOVERY_REASON (failure count: $NEW_FAILURE_COUNT)"
+          fi
+          
+          # Check if circuit breaker should be triggered
+          FAILURE_THRESHOLD="${{ steps.circuit_breaker_check.outputs.FAILURE_THRESHOLD }}"
+          
+          if [ "$NEW_FAILURE_COUNT" -ge "$FAILURE_THRESHOLD" ]; then
+            echo "🚫 Failure threshold reached - circuit breaker will be opened"
+            echo "Manual intervention is now required"
+          else
+            echo "⚠️  Failure recorded - $((FAILURE_THRESHOLD - NEW_FAILURE_COUNT)) failures remaining before circuit breaker"
+          fi
+          
+          echo "🚨 Recovery workflow completed with failures"
+          echo "Manual intervention may be required to resolve the underlying issues"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Generate recovery summary
+        if: always()
+        run: |
+          echo "📋 Generating recovery workflow summary..."
+          
+          # Get all relevant state
+          CIRCUIT_BREAKER_OPEN="${{ steps.circuit_breaker_check.outputs.CIRCUIT_BREAKER_OPEN }}"
+          RECOVERY_SUCCESSFUL="${{ steps.recovery_evaluation.outputs.RECOVERY_SUCCESSFUL }}"
+          SHOULD_REDEPLOY="${{ steps.redeployment_evaluation.outputs.SHOULD_REDEPLOY }}"
+          REDEPLOYMENT_TRIGGERED="${{ steps.redeployment.outputs.REDEPLOYMENT_TRIGGERED }}"
+          POST_RECOVERY_STATUS="${{ steps.post_recovery_health.outputs.POST_RECOVERY_STATUS }}"
+          CANDIDATE_DIGEST="${{ steps.redeployment_evaluation.outputs.CANDIDATE_DIGEST }}"
+          
+          # Create comprehensive summary
+          echo "## 🔧 Recovery and Redeployment Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Recovery Session" >> $GITHUB_STEP_SUMMARY
+          echo "- **Session ID**: \`$RECOVERY_SESSION_ID\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Timestamp**: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Triggered By**: $TRIGGERED_BY" >> $GITHUB_STEP_SUMMARY
+          echo "- **Recovery Reason**: $RECOVERY_REASON" >> $GITHUB_STEP_SUMMARY
+          echo "- **Health Status**: $HEALTH_STATUS" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "### Circuit Breaker Status" >> $GITHUB_STEP_SUMMARY
+          if [ "$CIRCUIT_BREAKER_OPEN" = "true" ]; then
+            echo "- **Status**: 🚫 **OPEN** - Manual intervention required" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- **Status**: ✅ **CLOSED** - Automated recovery allowed" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "$CIRCUIT_BREAKER_OPEN" != "true" ]; then
+            echo "### Recovery Actions" >> $GITHUB_STEP_SUMMARY
+            
+            if [ "${{ inputs.skip_recovery_actions }}" = "true" ]; then
+              echo "- **Recovery Actions**: ⏭️  Skipped by request" >> $GITHUB_STEP_SUMMARY
+            else
+              RECOVERY_ACTIONS="${{ steps.recovery_actions.outputs.RECOVERY_ACTIONS_PERFORMED }}"
+              if [ -n "$RECOVERY_ACTIONS" ]; then
+                echo "- **Actions Performed**: $RECOVERY_ACTIONS" >> $GITHUB_STEP_SUMMARY
+              else
+                echo "- **Actions Performed**: ❌ None completed successfully" >> $GITHUB_STEP_SUMMARY
+              fi
+              
+              if [ -n "$POST_RECOVERY_STATUS" ]; then
+                case "$POST_RECOVERY_STATUS" in
+                  "healthy")
+                    echo "- **Post-Recovery Health**: ✅ **HEALTHY**" >> $GITHUB_STEP_SUMMARY
+                    ;;
+                  "degraded")
+                    echo "- **Post-Recovery Health**: ⚠️  **DEGRADED**" >> $GITHUB_STEP_SUMMARY
+                    ;;
+                  "unhealthy")
+                    echo "- **Post-Recovery Health**: ❌ **UNHEALTHY**" >> $GITHUB_STEP_SUMMARY
+                    ;;
+                  *)
+                    echo "- **Post-Recovery Health**: ❓ **UNKNOWN**" >> $GITHUB_STEP_SUMMARY
+                    ;;
+                esac
+              fi
+            fi
+            
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Recovery Outcome" >> $GITHUB_STEP_SUMMARY
+            
+            if [ "$RECOVERY_SUCCESSFUL" = "true" ]; then
+              echo "- **Result**: ✅ **SUCCESS** - Service restored to healthy state" >> $GITHUB_STEP_SUMMARY
+              echo "- **Action**: No further automated action needed" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "- **Result**: ❌ **FAILED** - Recovery actions did not restore service health" >> $GITHUB_STEP_SUMMARY
+              
+              if [ "$SHOULD_REDEPLOY" = "true" ]; then
+                echo "- **Next Step**: Redeployment evaluation" >> $GITHUB_STEP_SUMMARY
+              else
+                echo "- **Next Step**: Manual intervention required" >> $GITHUB_STEP_SUMMARY
+              fi
+            fi
+            
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Redeployment Evaluation" >> $GITHUB_STEP_SUMMARY
+            
+            if [ "$SHOULD_REDEPLOY" = "true" ]; then
+              if [ -n "$CANDIDATE_DIGEST" ]; then
+                echo "- **Candidate Artifact**: \`$CANDIDATE_DIGEST\`" >> $GITHUB_STEP_SUMMARY
+                
+                if [ "$REDEPLOYMENT_TRIGGERED" = "true" ]; then
+                  echo "- **Redeployment**: ✅ **TRIGGERED** - Deployment workflow started" >> $GITHUB_STEP_SUMMARY
+                  echo "- **Action**: Monitor deployment workflow for results" >> $GITHUB_STEP_SUMMARY
+                else
+                  echo "- **Redeployment**: ❌ **FAILED** - Could not trigger deployment" >> $GITHUB_STEP_SUMMARY
+                  echo "- **Action**: Manual deployment may be required" >> $GITHUB_STEP_SUMMARY
+                fi
+              else
+                echo "- **Redeployment**: ❌ **BLOCKED** - No suitable candidate artifact found" >> $GITHUB_STEP_SUMMARY
+                echo "- **Action**: Manual intervention required" >> $GITHUB_STEP_SUMMARY
+              fi
+            else
+              REDEPLOYMENT_REASON="${{ steps.redeployment_evaluation.outputs.REDEPLOYMENT_REASON }}"
+              echo "- **Redeployment**: ⏹️  **NOT NEEDED** - $REDEPLOYMENT_REASON" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Current System State" >> $GITHUB_STEP_SUMMARY
+          echo "- **Deployed Artifact**: \`${DEPLOYED_DIGEST:-'none'}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Deployment Status**: $DEPLOYMENT_STATUS" >> $GITHUB_STEP_SUMMARY
+          
+          # Get current failure count
+          CURRENT_FAILURE_COUNT=$(gh variable get RECOVERY_FAILURE_COUNT --repo ${{ github.repository }} 2>/dev/null || echo "0")
+          FAILURE_THRESHOLD=$(gh variable get CIRCUIT_BREAKER_THRESHOLD --repo ${{ github.repository }} 2>/dev/null || echo "3")
+          
+          echo "- **Recovery Failure Count**: $CURRENT_FAILURE_COUNT / $FAILURE_THRESHOLD" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "$CURRENT_FAILURE_COUNT" -ge "$FAILURE_THRESHOLD" ]; then
+            echo "- **Circuit Breaker**: 🚫 **OPEN** - Manual reset required" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- **Circuit Breaker**: ✅ **CLOSED**" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Add recommendations based on outcome
+          if [ "$CIRCUIT_BREAKER_OPEN" = "true" ]; then
+            echo "### 🚨 Manual Intervention Required" >> $GITHUB_STEP_SUMMARY
+            echo "The circuit breaker is open due to repeated failures. To proceed:" >> $GITHUB_STEP_SUMMARY
+            echo "1. 🔍 **Investigate root cause** of repeated recovery failures" >> $GITHUB_STEP_SUMMARY
+            echo "2. 🛠️ **Fix underlying issues** manually" >> $GITHUB_STEP_SUMMARY
+            echo "3. 🔄 **Reset circuit breaker** by setting CIRCUIT_BREAKER_STATUS to 'closed'" >> $GITHUB_STEP_SUMMARY
+            echo "4. 🧪 **Test recovery** manually before re-enabling automation" >> $GITHUB_STEP_SUMMARY
+          elif [ "$RECOVERY_SUCCESSFUL" = "true" ]; then
+            echo "### ✅ Recovery Successful" >> $GITHUB_STEP_SUMMARY
+            echo "The service has been restored to a healthy state through recovery actions." >> $GITHUB_STEP_SUMMARY
+            echo "Continuous monitoring will resume normal operation." >> $GITHUB_STEP_SUMMARY
+          elif [ "$REDEPLOYMENT_TRIGGERED" = "true" ]; then
+            echo "### 🚀 Redeployment In Progress" >> $GITHUB_STEP_SUMMARY
+            echo "Recovery actions were insufficient, so redeployment has been triggered." >> $GITHUB_STEP_SUMMARY
+            echo "Monitor the deployment workflow to see if the service is restored." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### ⚠️  Manual Action Recommended" >> $GITHUB_STEP_SUMMARY
+            echo "Automated recovery and redeployment were not successful or possible." >> $GITHUB_STEP_SUMMARY
+            echo "Manual investigation and intervention are recommended." >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "*🔄 This recovery workflow ensures service reliability through automated and manual recovery paths.*" >> $GITHUB_STEP_SUMMARY
+          
+          echo "✅ Recovery workflow summary generated"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Cleanup recovery session
+        if: always()
+        run: |
+          echo "🧹 Cleaning up recovery session..."
+          
+          # Clear session variables
+          gh variable delete RECOVERY_SESSION_ID --repo ${{ github.repository }} 2>/dev/null || true
+          
+          # Update last completed recovery session
+          gh variable set LAST_COMPLETED_RECOVERY --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }}
+          gh variable set LAST_COMPLETED_RECOVERY_SESSION --body "$RECOVERY_SESSION_ID" --repo ${{ github.repository }}
+          
+          echo "✅ Recovery session cleanup completed"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

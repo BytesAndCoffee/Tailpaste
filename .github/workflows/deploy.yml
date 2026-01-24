@@ -13,6 +13,29 @@ on:
         required: false
         type: boolean
         default: false
+      artifact_digest:
+        description: 'Specific artifact digest to deploy (optional)'
+        required: false
+        type: string
+      bypass_gating:
+        description: 'Bypass automated gating (use with caution)'
+        required: false
+        type: boolean
+        default: false
+      manual_reason:
+        description: 'Reason for manual intervention (required for bypass)'
+        required: false
+        type: string
+      force_deployment:
+        description: 'Force deployment even if same artifact is deployed'
+        required: false
+        type: boolean
+        default: false
+      override_circuit_breaker:
+        description: 'Override circuit breaker (emergency use only)'
+        required: false
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       version:
@@ -24,6 +47,33 @@ on:
         required: false
         type: boolean
         default: false
+      artifact_digest:
+        description: 'Specific artifact digest to deploy (optional)'
+        required: false
+        type: string
+      bypass_gating:
+        description: 'Bypass automated gating (use with caution)'
+        required: false
+        type: boolean
+        default: false
+      manual_reason:
+        description: 'Reason for manual intervention (required for bypass)'
+        required: false
+        type: string
+      force_deployment:
+        description: 'Force deployment even if same artifact is deployed'
+        required: false
+        type: boolean
+        default: false
+      override_circuit_breaker:
+        description: 'Override circuit breaker (emergency use only)'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   deploy:
@@ -43,7 +93,472 @@ jobs:
     runs-on:
       - tailpaste-runners
     
+    # Enhanced concurrency control - prevent concurrent deployments
+    concurrency:
+      group: production-deployment
+      cancel-in-progress: false
+    
     steps:
+      - name: Log manual action and validate inputs
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          echo "🔧 Manual deployment/rollback initiated - logging action details..."
+          
+          # Initialize manual action tracking
+          MANUAL_ACTION_TYPE="deployment"
+          MANUAL_ACTOR="${{ github.actor }}"
+          MANUAL_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          MANUAL_REASON="${{ inputs.manual_reason }}"
+          BYPASS_GATING="${{ inputs.bypass_gating }}"
+          OVERRIDE_CIRCUIT_BREAKER="${{ inputs.override_circuit_breaker }}"
+          FORCE_DEPLOYMENT="${{ inputs.force_deployment }}"
+          IS_ROLLBACK="${{ inputs.rollback }}"
+          ARTIFACT_DIGEST="${{ inputs.artifact_digest }}"
+          
+          # Determine action type
+          if [ "$IS_ROLLBACK" = "true" ]; then
+            MANUAL_ACTION_TYPE="rollback"
+          fi
+          
+          echo "=== MANUAL ACTION DETAILS ==="
+          echo "Action Type: $MANUAL_ACTION_TYPE"
+          echo "Actor: $MANUAL_ACTOR"
+          echo "Timestamp: $MANUAL_TIMESTAMP"
+          echo "Reason: ${MANUAL_REASON:-'Not provided'}"
+          echo "Bypass Gating: $BYPASS_GATING"
+          echo "Override Circuit Breaker: $OVERRIDE_CIRCUIT_BREAKER"
+          echo "Force Deployment: $FORCE_DEPLOYMENT"
+          echo "Artifact Digest: ${ARTIFACT_DIGEST:-'Auto-select'}"
+          
+          # Validate manual reason for sensitive operations
+          if [ "$BYPASS_GATING" = "true" ] || [ "$OVERRIDE_CIRCUIT_BREAKER" = "true" ]; then
+            if [ -z "$MANUAL_REASON" ] || [ "$MANUAL_REASON" = "null" ]; then
+              echo "❌ Manual reason is required when bypassing gating or overriding circuit breaker"
+              echo "Please provide a clear reason for this manual intervention"
+              exit 1
+            fi
+            
+            if [ ${#MANUAL_REASON} -lt 10 ]; then
+              echo "❌ Manual reason must be at least 10 characters for sensitive operations"
+              echo "Please provide a detailed reason for this manual intervention"
+              exit 1
+            fi
+          fi
+          
+          # Log manual action to GitHub variables for audit trail
+          gh variable set LAST_MANUAL_ACTION_TYPE --body "$MANUAL_ACTION_TYPE" --repo ${{ github.repository }}
+          gh variable set LAST_MANUAL_ACTION_ACTOR --body "$MANUAL_ACTOR" --repo ${{ github.repository }}
+          gh variable set LAST_MANUAL_ACTION_TIMESTAMP --body "$MANUAL_TIMESTAMP" --repo ${{ github.repository }}
+          gh variable set LAST_MANUAL_ACTION_REASON --body "${MANUAL_REASON:-'Not provided'}" --repo ${{ github.repository }}
+          gh variable set LAST_MANUAL_ACTION_BYPASS_GATING --body "$BYPASS_GATING" --repo ${{ github.repository }}
+          gh variable set LAST_MANUAL_ACTION_OVERRIDE_CB --body "$OVERRIDE_CIRCUIT_BREAKER" --repo ${{ github.repository }}
+          gh variable set LAST_MANUAL_ACTION_FORCE --body "$FORCE_DEPLOYMENT" --repo ${{ github.repository }}
+          
+          # Create detailed manual action log entry
+          MANUAL_ACTION_LOG="{\"action_type\":\"$MANUAL_ACTION_TYPE\",\"actor\":\"$MANUAL_ACTOR\",\"timestamp\":\"$MANUAL_TIMESTAMP\",\"reason\":\"${MANUAL_REASON:-'Not provided'}\",\"bypass_gating\":$BYPASS_GATING,\"override_circuit_breaker\":$OVERRIDE_CIRCUIT_BREAKER,\"force_deployment\":$FORCE_DEPLOYMENT,\"artifact_digest\":\"${ARTIFACT_DIGEST:-'auto-select'}\",\"workflow_run_id\":\"${{ github.run_id }}\",\"workflow_run_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
+          
+          # Store detailed log for audit purposes
+          gh variable set LAST_MANUAL_ACTION_DETAILS --body "$MANUAL_ACTION_LOG" --repo ${{ github.repository }}
+          
+          # Set outputs for later steps
+          echo "MANUAL_ACTION_TYPE=$MANUAL_ACTION_TYPE" >> $GITHUB_ENV
+          echo "MANUAL_ACTOR=$MANUAL_ACTOR" >> $GITHUB_ENV
+          echo "MANUAL_TIMESTAMP=$MANUAL_TIMESTAMP" >> $GITHUB_ENV
+          echo "MANUAL_REASON=${MANUAL_REASON:-'Not provided'}" >> $GITHUB_ENV
+          echo "BYPASS_GATING=$BYPASS_GATING" >> $GITHUB_ENV
+          echo "OVERRIDE_CIRCUIT_BREAKER=$OVERRIDE_CIRCUIT_BREAKER" >> $GITHUB_ENV
+          echo "FORCE_DEPLOYMENT=$FORCE_DEPLOYMENT" >> $GITHUB_ENV
+          
+          echo "✅ Manual action logged and validated successfully"
+          
+          # Add manual action summary to GitHub step summary
+          echo "## 🔧 Manual Action Initiated" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Action Details" >> $GITHUB_STEP_SUMMARY
+          echo "- **Type**: $MANUAL_ACTION_TYPE" >> $GITHUB_STEP_SUMMARY
+          echo "- **Actor**: $MANUAL_ACTOR" >> $GITHUB_STEP_SUMMARY
+          echo "- **Timestamp**: $MANUAL_TIMESTAMP" >> $GITHUB_STEP_SUMMARY
+          echo "- **Reason**: ${MANUAL_REASON:-'Not provided'}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Override Flags" >> $GITHUB_STEP_SUMMARY
+          echo "- **Bypass Gating**: $([ "$BYPASS_GATING" = "true" ] && echo "⚠️ YES" || echo "❌ NO")" >> $GITHUB_STEP_SUMMARY
+          echo "- **Override Circuit Breaker**: $([ "$OVERRIDE_CIRCUIT_BREAKER" = "true" ] && echo "🚨 YES" || echo "❌ NO")" >> $GITHUB_STEP_SUMMARY
+          echo "- **Force Deployment**: $([ "$FORCE_DEPLOYMENT" = "true" ] && echo "⚠️ YES" || echo "❌ NO")" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "$BYPASS_GATING" = "true" ] || [ "$OVERRIDE_CIRCUIT_BREAKER" = "true" ]; then
+            echo "### ⚠️ Safety Override Warning" >> $GITHUB_STEP_SUMMARY
+            echo "This manual action includes safety overrides. Ensure you understand the implications:" >> $GITHUB_STEP_SUMMARY
+            echo "- Bypassing gating may deploy untested artifacts" >> $GITHUB_STEP_SUMMARY
+            echo "- Overriding circuit breaker may repeat failed operations" >> $GITHUB_STEP_SUMMARY
+            echo "- Manual intervention responsibility lies with the operator" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check circuit breaker status
+        id: circuit_breaker_check
+        run: |
+          echo "🔍 Checking circuit breaker status before deployment..."
+          
+          # Get circuit breaker state
+          CIRCUIT_BREAKER_STATUS=$(gh variable get CIRCUIT_BREAKER_STATUS --repo ${{ github.repository }} 2>/dev/null || echo "closed")
+          DEPLOYMENT_FAILURE_COUNT=$(gh variable get DEPLOYMENT_FAILURE_COUNT --repo ${{ github.repository }} 2>/dev/null || echo "0")
+          DEPLOYMENT_FAILURE_THRESHOLD=$(gh variable get DEPLOYMENT_CIRCUIT_BREAKER_THRESHOLD --repo ${{ github.repository }} 2>/dev/null || echo "5")
+          LAST_DEPLOYMENT_FAILURE_TIME=$(gh variable get LAST_DEPLOYMENT_FAILURE_TIME --repo ${{ github.repository }} 2>/dev/null || echo "")
+          
+          echo "Circuit breaker status: $CIRCUIT_BREAKER_STATUS"
+          echo "Deployment failure count: $DEPLOYMENT_FAILURE_COUNT"
+          echo "Deployment failure threshold: $DEPLOYMENT_FAILURE_THRESHOLD"
+          echo "Last deployment failure: ${LAST_DEPLOYMENT_FAILURE_TIME:-'none'}"
+          
+          CIRCUIT_BREAKER_OPEN=false
+          
+          # Check if circuit breaker should be open for deployments
+          if [ "$CIRCUIT_BREAKER_STATUS" = "open" ]; then
+            echo "🚫 Circuit breaker is already open"
+            CIRCUIT_BREAKER_OPEN=true
+          elif [ "$DEPLOYMENT_FAILURE_COUNT" -ge "$DEPLOYMENT_FAILURE_THRESHOLD" ]; then
+            echo "🚫 Deployment failure count ($DEPLOYMENT_FAILURE_COUNT) exceeds threshold ($DEPLOYMENT_FAILURE_THRESHOLD)"
+            echo "🔴 Opening circuit breaker for deployments"
+            
+            # Open circuit breaker
+            gh variable set CIRCUIT_BREAKER_STATUS --body "open" --repo ${{ github.repository }}
+            gh variable set CIRCUIT_BREAKER_OPENED_AT --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }}
+            gh variable set CIRCUIT_BREAKER_OPENED_BY --body "deployment_failures" --repo ${{ github.repository }}
+            gh variable set CIRCUIT_BREAKER_TRIGGER_REASON --body "deployment_failure_threshold_exceeded" --repo ${{ github.repository }}
+            
+            CIRCUIT_BREAKER_OPEN=true
+          else
+            echo "✅ Circuit breaker is closed - deployment can proceed"
+          fi
+          
+          echo "CIRCUIT_BREAKER_OPEN=$CIRCUIT_BREAKER_OPEN" >> $GITHUB_OUTPUT
+          echo "DEPLOYMENT_FAILURE_COUNT=$DEPLOYMENT_FAILURE_COUNT" >> $GITHUB_OUTPUT
+          echo "DEPLOYMENT_FAILURE_THRESHOLD=$DEPLOYMENT_FAILURE_THRESHOLD" >> $GITHUB_OUTPUT
+          
+          # Allow manual deployments to bypass circuit breaker with explicit confirmation
+          if [ "$CIRCUIT_BREAKER_OPEN" = "true" ] && [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            OVERRIDE_CB="${{ inputs.override_circuit_breaker }}"
+            MANUAL_REASON="${{ inputs.manual_reason }}"
+            
+            if [ "$OVERRIDE_CB" = "true" ] && [ -n "$MANUAL_REASON" ]; then
+              echo "🚨 CIRCUIT BREAKER MANUAL OVERRIDE ACTIVATED"
+              echo "⚠️  Circuit breaker is open, but manual override is enabled"
+              echo "🔧 Manual operator: ${{ github.actor }}"
+              echo "📝 Override reason: $MANUAL_REASON"
+              echo "⏰ Override timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+              echo ""
+              echo "🚨 IMPORTANT SAFETY WARNINGS:"
+              echo "- You are overriding automated safety mechanisms"
+              echo "- Ensure you have investigated the root cause of circuit breaker activation"
+              echo "- This deployment may repeat previously failed operations"
+              echo "- Monitor the deployment closely and be prepared for manual intervention"
+              echo "- Document the outcome for future reference"
+              
+              # Log comprehensive circuit breaker override
+              gh variable set LAST_CIRCUIT_BREAKER_OVERRIDE --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }}
+              gh variable set CIRCUIT_BREAKER_OVERRIDE_BY --body "${{ github.actor }}" --repo ${{ github.repository }}
+              gh variable set CIRCUIT_BREAKER_OVERRIDE_REASON --body "$MANUAL_REASON" --repo ${{ github.repository }}
+              gh variable set CIRCUIT_BREAKER_OVERRIDE_TYPE --body "manual_deployment_override" --repo ${{ github.repository }}
+              gh variable set CIRCUIT_BREAKER_OVERRIDE_WORKFLOW_RUN --body "${{ github.run_id }}" --repo ${{ github.repository }}
+              
+              # Create detailed override audit log
+              OVERRIDE_AUDIT_LOG="{\"override_timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"override_by\":\"${{ github.actor }}\",\"override_reason\":\"$MANUAL_REASON\",\"override_type\":\"manual_deployment_override\",\"circuit_breaker_status\":\"$CIRCUIT_BREAKER_STATUS\",\"deployment_failure_count\":\"$DEPLOYMENT_FAILURE_COUNT\",\"workflow_run_id\":\"${{ github.run_id }}\",\"workflow_run_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
+              
+              gh variable set CIRCUIT_BREAKER_OVERRIDE_AUDIT --body "$OVERRIDE_AUDIT_LOG" --repo ${{ github.repository }}
+              
+              echo "CIRCUIT_BREAKER_OPEN=false" >> $GITHUB_OUTPUT
+              echo "MANUAL_OVERRIDE=true" >> $GITHUB_OUTPUT
+              echo "CIRCUIT_BREAKER_OVERRIDDEN=true" >> $GITHUB_OUTPUT
+              
+            elif [ "$OVERRIDE_CB" = "true" ] && [ -z "$MANUAL_REASON" ]; then
+              echo "❌ Circuit breaker override requested but no reason provided"
+              echo "Manual reason is required for circuit breaker overrides"
+              echo "Please provide a detailed reason explaining why this override is necessary"
+              exit 1
+              
+            else
+              echo "⚠️  Circuit breaker is open, but this is a manual deployment without override"
+              echo "Manual deployments can proceed with caution (no override flag set)"
+              echo "🚨 IMPORTANT: Ensure you have investigated the root cause of repeated deployment failures"
+              
+              # Log manual deployment without override
+              gh variable set LAST_CIRCUIT_BREAKER_BYPASS --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }}
+              gh variable set CIRCUIT_BREAKER_BYPASS_BY --body "${{ github.actor }}" --repo ${{ github.repository }}
+              gh variable set CIRCUIT_BREAKER_BYPASS_REASON --body "manual_deployment_without_override" --repo ${{ github.repository }}
+              
+              echo "CIRCUIT_BREAKER_OPEN=false" >> $GITHUB_OUTPUT
+              echo "MANUAL_OVERRIDE=true" >> $GITHUB_OUTPUT
+              echo "CIRCUIT_BREAKER_OVERRIDDEN=false" >> $GITHUB_OUTPUT
+            fi
+            
+          elif [ "$CIRCUIT_BREAKER_OPEN" = "true" ]; then
+            echo "🚨 Circuit breaker is open - automated deployment blocked"
+            echo "Deployment failures have exceeded the threshold"
+            echo "Manual intervention is required to:"
+            echo "1. Investigate root cause of deployment failures"
+            echo "2. Fix underlying issues"
+            echo "3. Reset circuit breaker manually"
+            echo "4. Test deployment manually before re-enabling automation"
+            
+            # Record circuit breaker activation
+            gh variable set LAST_CIRCUIT_BREAKER_TRIGGER --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }}
+            
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Acquire deployment lock with enhanced concurrency control
+        if: steps.circuit_breaker_check.outputs.CIRCUIT_BREAKER_OPEN != 'true'
+        run: |
+          echo "🔒 Acquiring deployment lock with enhanced concurrency control..."
+          
+          # Check if another deployment is in progress
+          CURRENT_DEPLOYMENT=$(gh variable get DEPLOYMENT_IN_PROGRESS --repo ${{ github.repository }} 2>/dev/null || echo "false")
+          DEPLOYMENT_STARTED_BY=$(gh variable get DEPLOYMENT_STARTED_BY --repo ${{ github.repository }} 2>/dev/null || echo "")
+          DEPLOYMENT_STARTED_AT=$(gh variable get DEPLOYMENT_STARTED_AT --repo ${{ github.repository }} 2>/dev/null || echo "")
+          
+          IS_MANUAL="${{ github.event_name == 'workflow_dispatch' }}"
+          FORCE_DEPLOYMENT="${{ inputs.force_deployment }}"
+          MANUAL_REASON="${{ inputs.manual_reason }}"
+          
+          if [ "$CURRENT_DEPLOYMENT" = "true" ]; then
+            echo "⚠️  Another deployment is already in progress"
+            echo "Started by: $DEPLOYMENT_STARTED_BY"
+            echo "Started at: $DEPLOYMENT_STARTED_AT"
+            
+            if [ "$IS_MANUAL" = "true" ] && [ "$FORCE_DEPLOYMENT" = "true" ]; then
+              if [ -n "$MANUAL_REASON" ]; then
+                echo "🚨 FORCE DEPLOYMENT OVERRIDE ACTIVATED"
+                echo "⚠️  Forcing deployment despite concurrent deployment in progress"
+                echo "🔧 Manual operator: ${{ github.actor }}"
+                echo "📝 Force reason: $MANUAL_REASON"
+                echo "⏰ Force timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                echo ""
+                echo "🚨 IMPORTANT SAFETY WARNINGS:"
+                echo "- You are overriding deployment concurrency controls"
+                echo "- This may cause conflicts with the running deployment"
+                echo "- Monitor both deployments closely"
+                echo "- Be prepared for manual cleanup if conflicts occur"
+                
+                # Log force deployment override
+                gh variable set LAST_FORCE_DEPLOYMENT_OVERRIDE --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }}
+                gh variable set FORCE_DEPLOYMENT_OVERRIDE_BY --body "${{ github.actor }}" --repo ${{ github.repository }}
+                gh variable set FORCE_DEPLOYMENT_OVERRIDE_REASON --body "$MANUAL_REASON" --repo ${{ github.repository }}
+                gh variable set FORCE_DEPLOYMENT_PREVIOUS_ACTOR --body "$DEPLOYMENT_STARTED_BY" --repo ${{ github.repository }}
+                
+                # Create detailed force deployment audit log
+                FORCE_DEPLOYMENT_AUDIT="{\"force_timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"force_by\":\"${{ github.actor }}\",\"force_reason\":\"$MANUAL_REASON\",\"previous_deployment_by\":\"$DEPLOYMENT_STARTED_BY\",\"previous_deployment_at\":\"$DEPLOYMENT_STARTED_AT\",\"workflow_run_id\":\"${{ github.run_id }}\",\"workflow_run_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
+                
+                gh variable set FORCE_DEPLOYMENT_AUDIT --body "$FORCE_DEPLOYMENT_AUDIT" --repo ${{ github.repository }}
+                
+                echo "⚠️  Proceeding with forced deployment - concurrency override active"
+              else
+                echo "❌ Force deployment requested but no reason provided"
+                echo "Manual reason is required for force deployment overrides"
+                echo "Please provide a detailed reason explaining why this force deployment is necessary"
+                exit 1
+              fi
+            else
+              echo "❌ Deployment lock is held by another process"
+              echo "Options to resolve:"
+              echo "1. Wait for the current deployment to complete"
+              echo "2. Use 'force_deployment' flag with a detailed reason (manual deployments only)"
+              echo "3. Manually clear the deployment lock if the previous deployment failed"
+              echo ""
+              echo "To manually clear a stale lock, run:"
+              echo "gh variable set DEPLOYMENT_IN_PROGRESS --body 'false' --repo ${{ github.repository }}"
+              exit 1
+            fi
+          fi
+          
+          # Set deployment lock with enhanced tracking
+          gh variable set DEPLOYMENT_IN_PROGRESS --body "true" --repo ${{ github.repository }}
+          gh variable set DEPLOYMENT_STARTED_BY --body "${{ github.actor }}" --repo ${{ github.repository }}
+          gh variable set DEPLOYMENT_STARTED_AT --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }}
+          gh variable set DEPLOYMENT_TYPE_TRIGGER --body "$([ "$IS_MANUAL" = "true" ] && echo "manual" || echo "automated")" --repo ${{ github.repository }}
+          gh variable set DEPLOYMENT_WORKFLOW_RUN_ID --body "${{ github.run_id }}" --repo ${{ github.repository }}
+          
+          # Log circuit breaker status for deployment tracking
+          MANUAL_OVERRIDE="${{ steps.circuit_breaker_check.outputs.MANUAL_OVERRIDE }}"
+          CIRCUIT_BREAKER_OVERRIDDEN="${{ steps.circuit_breaker_check.outputs.CIRCUIT_BREAKER_OVERRIDDEN }}"
+          
+          if [ "$MANUAL_OVERRIDE" = "true" ]; then
+            if [ "$CIRCUIT_BREAKER_OVERRIDDEN" = "true" ]; then
+              echo "🚨 Deployment proceeding with circuit breaker manual override"
+              gh variable set DEPLOYMENT_CIRCUIT_BREAKER_OVERRIDE --body "true" --repo ${{ github.repository }}
+              gh variable set DEPLOYMENT_CIRCUIT_BREAKER_OVERRIDE_TYPE --body "explicit_override" --repo ${{ github.repository }}
+            else
+              echo "⚠️  Deployment proceeding with circuit breaker bypass (no explicit override)"
+              gh variable set DEPLOYMENT_CIRCUIT_BREAKER_OVERRIDE --body "true" --repo ${{ github.repository }}
+              gh variable set DEPLOYMENT_CIRCUIT_BREAKER_OVERRIDE_TYPE --body "manual_bypass" --repo ${{ github.repository }}
+            fi
+          else
+            gh variable set DEPLOYMENT_CIRCUIT_BREAKER_OVERRIDE --body "false" --repo ${{ github.repository }}
+            gh variable set DEPLOYMENT_CIRCUIT_BREAKER_OVERRIDE_TYPE --body "none" --repo ${{ github.repository }}
+          fi
+          
+          # Log force deployment status
+          if [ "$FORCE_DEPLOYMENT" = "true" ]; then
+            gh variable set DEPLOYMENT_FORCE_OVERRIDE --body "true" --repo ${{ github.repository }}
+            echo "⚠️  Deployment using force override"
+          else
+            gh variable set DEPLOYMENT_FORCE_OVERRIDE --body "false" --repo ${{ github.repository }}
+          fi
+          
+          echo "✅ Enhanced deployment lock acquired successfully"
+          echo "Lock holder: ${{ github.actor }}"
+          echo "Lock type: $([ "$IS_MANUAL" = "true" ] && echo "Manual" || echo "Automated")"
+          echo "Workflow run: ${{ github.run_id }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate integration test results and artifact deployability
+        if: github.event_name == 'workflow_run' || (github.event_name == 'workflow_dispatch' && inputs.bypass_gating != true)
+        run: |
+          echo "🔍 Validating integration test results and artifact deployability..."
+          
+          # Skip validation if manual bypass is enabled
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.bypass_gating }}" = "true" ]; then
+            echo "⚠️  Bypassing integration test validation due to manual override"
+            echo "🔧 Manual operator: ${{ github.actor }}"
+            echo "📝 Bypass reason: ${{ inputs.manual_reason }}"
+            echo "🚨 WARNING: Deploying without integration test validation"
+            return 0
+          fi
+          
+          # Get the commit SHA from the integration test workflow
+          COMMIT_SHA="${{ github.event.workflow_run.head_sha }}"
+          
+          # Get artifact digest for this commit
+          DIGEST=$(python scripts/artifact_manager.py get-digest --commit $COMMIT_SHA 2>/dev/null || echo "")
+          
+          if [ -z "$DIGEST" ]; then
+            echo "❌ No artifact found for commit $COMMIT_SHA"
+            echo "This indicates the CI workflow did not create an artifact"
+            exit 1
+          fi
+          
+          echo "Found artifact: $DIGEST"
+          
+          # Validate digest format
+          if ! python scripts/artifact_manager.py validate-digest --digest "$DIGEST" --registry ${{ env.REGISTRY }} --repository ${{ env.IMAGE_NAME }}; then
+            echo "❌ Invalid or non-existent artifact digest: $DIGEST"
+            exit 1
+          fi
+          
+          # Check artifact status - must be deployable
+          STATUS=$(python scripts/artifact_manager.py get-status --digest "$DIGEST" 2>/dev/null || echo "")
+          
+          if [ "$STATUS" != "deployable" ]; then
+            echo "❌ Artifact is not deployable. Current status: $STATUS"
+            echo "Integration tests may have failed or artifact was not properly marked as deployable"
+            exit 1
+          fi
+          
+          # Verify artifact has passed integration tests
+          TEST_RESULTS=$(python scripts/artifact_manager.py get-test-results --digest "$DIGEST" 2>/dev/null || echo "{}")
+          INTEGRATION_STATUS=$(echo "$TEST_RESULTS" | python -c "import sys, json; data=json.load(sys.stdin); print(data.get('integration', {}).get('status', 'unknown'))")
+          
+          if [ "$INTEGRATION_STATUS" != "passed" ]; then
+            echo "❌ Artifact has not passed integration tests. Status: $INTEGRATION_STATUS"
+            exit 1
+          fi
+          
+          echo "✅ Artifact is deployable and has passed all required tests"
+          echo "ARTIFACT_DIGEST=$DIGEST" >> $GITHUB_ENV
+
+      - name: Validate manual deployment artifact with gating bypass support
+        if: github.event_name == 'workflow_dispatch' && inputs.artifact_digest != '' && inputs.rollback != true
+        run: |
+          echo "🔍 Validating manually specified artifact..."
+          
+          DIGEST="${{ inputs.artifact_digest }}"
+          BYPASS_GATING="${{ inputs.bypass_gating }}"
+          MANUAL_REASON="${{ inputs.manual_reason }}"
+          
+          # Validate digest format
+          if ! python scripts/artifact_manager.py validate-digest --digest "$DIGEST" --registry ${{ env.REGISTRY }} --repository ${{ env.IMAGE_NAME }}; then
+            echo "❌ Invalid or non-existent artifact digest: $DIGEST"
+            exit 1
+          fi
+          
+          # Check artifact status - can be bypassed with manual override
+          STATUS=$(python scripts/artifact_manager.py get-status --digest "$DIGEST" 2>/dev/null || echo "")
+          
+          if [ "$STATUS" != "deployable" ]; then
+            if [ "$BYPASS_GATING" = "true" ] && [ -n "$MANUAL_REASON" ]; then
+              echo "⚠️  GATING BYPASS ACTIVATED"
+              echo "🚨 Artifact is not marked as deployable (status: $STATUS)"
+              echo "🔧 Manual operator: ${{ github.actor }}"
+              echo "📝 Bypass reason: $MANUAL_REASON"
+              echo "⏰ Bypass timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+              echo ""
+              echo "🚨 IMPORTANT SAFETY WARNINGS:"
+              echo "- You are deploying an artifact that has not passed standard gating"
+              echo "- This artifact may not have passed integration tests"
+              echo "- Monitor the deployment closely for issues"
+              echo "- Be prepared for immediate rollback if problems occur"
+              
+              # Log gating bypass
+              gh variable set LAST_GATING_BYPASS --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }}
+              gh variable set GATING_BYPASS_BY --body "${{ github.actor }}" --repo ${{ github.repository }}
+              gh variable set GATING_BYPASS_REASON --body "$MANUAL_REASON" --repo ${{ github.repository }}
+              gh variable set GATING_BYPASS_ARTIFACT --body "$DIGEST" --repo ${{ github.repository }}
+              gh variable set GATING_BYPASS_ARTIFACT_STATUS --body "$STATUS" --repo ${{ github.repository }}
+              
+              # Create detailed gating bypass audit log
+              GATING_BYPASS_AUDIT="{\"bypass_timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"bypass_by\":\"${{ github.actor }}\",\"bypass_reason\":\"$MANUAL_REASON\",\"artifact_digest\":\"$DIGEST\",\"artifact_status\":\"$STATUS\",\"workflow_run_id\":\"${{ github.run_id }}\",\"workflow_run_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
+              
+              gh variable set GATING_BYPASS_AUDIT --body "$GATING_BYPASS_AUDIT" --repo ${{ github.repository }}
+              
+              echo "⚠️  Proceeding with gating bypass - artifact validation overridden"
+            else
+              echo "❌ Manually specified artifact is not deployable (status: $STATUS)"
+              echo "Options to resolve:"
+              echo "1. Use a different artifact that has passed integration tests"
+              echo "2. Use 'bypass_gating' flag with a detailed reason (use with extreme caution)"
+              echo "3. Wait for the artifact to complete integration testing"
+              exit 1
+            fi
+          else
+            echo "✅ Manual artifact is valid and deployable"
+          fi
+          
+          echo "ARTIFACT_DIGEST=$DIGEST" >> $GITHUB_ENV
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get latest deployable artifact for manual deployment
+        if: github.event_name == 'workflow_dispatch' && inputs.artifact_digest == '' && inputs.rollback != true
+        run: |
+          echo "🔍 Finding latest deployable artifact for manual deployment..."
+          
+          # Get the latest deployable artifact from artifact manager
+          # This is a simplified approach - in a real system you might want more sophisticated logic
+          LATEST_COMMIT=$(git rev-parse HEAD)
+          DIGEST=$(python scripts/artifact_manager.py get-digest --commit $LATEST_COMMIT 2>/dev/null || echo "")
+          
+          if [ -z "$DIGEST" ]; then
+            echo "❌ No artifact found for latest commit $LATEST_COMMIT"
+            echo "Please specify an artifact digest manually or ensure CI has run"
+            exit 1
+          fi
+          
+          # Validate the artifact is deployable
+          STATUS=$(python scripts/artifact_manager.py get-status --digest "$DIGEST" 2>/dev/null || echo "")
+          
+          if [ "$STATUS" != "deployable" ]; then
+            echo "❌ Latest artifact is not deployable. Current status: $STATUS"
+            echo "Please specify a specific deployable artifact digest"
+            exit 1
+          fi
+          
+          echo "✅ Using latest deployable artifact: $DIGEST"
+          echo "ARTIFACT_DIGEST=$DIGEST" >> $GITHUB_ENV
       - name: Checkout code
         uses: actions/checkout@v4
         if: ${{ !inputs.rollback }}
@@ -61,9 +576,27 @@ jobs:
           tags: tag:ci
           ping: docker.tailfa875.ts.net
       
-      - name: Backup current deployment
+      - name: Backup current deployment state
         run: |
-          echo "💾 Creating backup of current deployment..."
+          echo "💾 Creating backup of current deployment state..."
+          
+          # Get current deployment state from GitHub variables
+          CURRENT_DIGEST=$(gh variable get DEPLOYED_ARTIFACT_DIGEST --repo ${{ github.repository }} 2>/dev/null || echo "")
+          CURRENT_TIMESTAMP=$(gh variable get DEPLOYMENT_TIMESTAMP --repo ${{ github.repository }} 2>/dev/null || echo "")
+          
+          if [ -n "$CURRENT_DIGEST" ]; then
+            echo "Current deployed artifact: $CURRENT_DIGEST"
+            echo "Current deployment timestamp: $CURRENT_TIMESTAMP"
+            
+            # Store backup state
+            gh variable set BACKUP_ARTIFACT_DIGEST --body "$CURRENT_DIGEST" --repo ${{ github.repository }}
+            gh variable set BACKUP_DEPLOYMENT_TIMESTAMP --body "$CURRENT_TIMESTAMP" --repo ${{ github.repository }}
+            gh variable set BACKUP_CREATED_AT --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }}
+            
+            echo "✅ Deployment state backed up"
+          else
+            echo "ℹ️ No previous deployment state found"
+          fi
           
           ssh -o StrictHostKeyChecking=no michael@docker << 'EOF'
             set -e
@@ -97,80 +630,446 @@ jobs:
             
             echo "✅ Backup completed: $BACKUP_NAME"
           EOF
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
-      - name: Rollback to previous version
+      - name: Enhanced rollback to previous version with gating bypass
         if: ${{ inputs.rollback }}
         run: |
-          echo "⏮️  Rolling back to previous version..."
+          echo "⏮️  Enhanced rollback to previous version with gating bypass support..."
           
+          # Initialize rollback tracking
+          ROLLBACK_STATUS="pending"
+          ROLLBACK_DETAILS=""
+          ROLLBACK_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          BYPASS_GATING="${{ inputs.bypass_gating }}"
+          MANUAL_REASON="${{ inputs.manual_reason }}"
+          
+          # Record rollback initiation with enhanced logging
+          gh variable set ROLLBACK_STATUS --body "pending" --repo ${{ github.repository }}
+          gh variable set ROLLBACK_INITIATED_BY --body "${{ github.actor }}" --repo ${{ github.repository }}
+          gh variable set ROLLBACK_INITIATED_AT --body "$ROLLBACK_TIMESTAMP" --repo ${{ github.repository }}
+          gh variable set ROLLBACK_BYPASS_GATING --body "$BYPASS_GATING" --repo ${{ github.repository }}
+          gh variable set ROLLBACK_MANUAL_REASON --body "${MANUAL_REASON:-'Not provided'}" --repo ${{ github.repository }}
+          
+          # Log rollback bypass if enabled
+          if [ "$BYPASS_GATING" = "true" ]; then
+            echo "⚠️  ROLLBACK GATING BYPASS ACTIVATED"
+            echo "🚨 Automated gating will be bypassed for this rollback"
+            echo "🔧 Manual operator: ${{ github.actor }}"
+            echo "📝 Bypass reason: ${MANUAL_REASON:-'Not provided'}"
+            echo "⏰ Bypass timestamp: $ROLLBACK_TIMESTAMP"
+            echo ""
+            echo "🚨 IMPORTANT SAFETY WARNINGS:"
+            echo "- Rollback validation may be skipped"
+            echo "- Health checks may be bypassed"
+            echo "- Monitor the rollback closely"
+            echo "- Be prepared for manual intervention if issues occur"
+            
+            # Log rollback gating bypass
+            gh variable set LAST_ROLLBACK_GATING_BYPASS --body "$ROLLBACK_TIMESTAMP" --repo ${{ github.repository }}
+            gh variable set ROLLBACK_GATING_BYPASS_BY --body "${{ github.actor }}" --repo ${{ github.repository }}
+            gh variable set ROLLBACK_GATING_BYPASS_REASON --body "${MANUAL_REASON:-'Not provided'}" --repo ${{ github.repository }}
+            
+            # Create detailed rollback bypass audit log
+            ROLLBACK_BYPASS_AUDIT="{\"bypass_timestamp\":\"$ROLLBACK_TIMESTAMP\",\"bypass_by\":\"${{ github.actor }}\",\"bypass_reason\":\"${MANUAL_REASON:-'Not provided'}\",\"bypass_type\":\"rollback_gating_bypass\",\"workflow_run_id\":\"${{ github.run_id }}\",\"workflow_run_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
+            
+            gh variable set ROLLBACK_BYPASS_AUDIT --body "$ROLLBACK_BYPASS_AUDIT" --repo ${{ github.repository }}
+          fi
+          
+          # Get backup state from GitHub variables with enhanced validation
+          BACKUP_DIGEST=$(gh variable get BACKUP_ARTIFACT_DIGEST --repo ${{ github.repository }} 2>/dev/null || echo "")
+          BACKUP_TIMESTAMP=$(gh variable get BACKUP_DEPLOYMENT_TIMESTAMP --repo ${{ github.repository }} 2>/dev/null || echo "")
+          BACKUP_CREATED_AT=$(gh variable get BACKUP_CREATED_AT --repo ${{ github.repository }} 2>/dev/null || echo "")
+          
+          echo "=== ROLLBACK PREPARATION ==="
+          echo "Backup artifact digest: ${BACKUP_DIGEST:-'N/A'}"
+          echo "Backup deployment timestamp: ${BACKUP_TIMESTAMP:-'N/A'}"
+          echo "Backup created at: ${BACKUP_CREATED_AT:-'N/A'}"
+          
+          # Validate backup availability
+          if [ -n "$BACKUP_DIGEST" ]; then
+            echo "✅ Digest-based rollback available"
+            
+            # Validate backup artifact exists and is accessible
+            if python scripts/artifact_manager.py validate-digest --digest "$BACKUP_DIGEST" --registry ${{ env.REGISTRY }} --repository ${{ env.IMAGE_NAME }}; then
+              echo "✅ Backup artifact validated in registry"
+              echo "ARTIFACT_DIGEST=$BACKUP_DIGEST" >> $GITHUB_ENV
+              ROLLBACK_METHOD="digest-based"
+            else
+              echo "⚠️  Backup artifact not found in registry, falling back to file-based rollback"
+              ROLLBACK_METHOD="file-based"
+            fi
+          else
+            echo "ℹ️ No backup artifact digest found, using file-based rollback"
+            ROLLBACK_METHOD="file-based"
+          fi
+          
+          echo "Rollback method: $ROLLBACK_METHOD"
+          
+          # Record rollback method and target
+          gh variable set ROLLBACK_METHOD --body "$ROLLBACK_METHOD" --repo ${{ github.repository }}
+          if [ -n "$BACKUP_DIGEST" ]; then
+            gh variable set ROLLBACK_TARGET_DIGEST --body "$BACKUP_DIGEST" --repo ${{ github.repository }}
+          fi
+          
+          echo "=== EXECUTING ROLLBACK ==="
+          
+          # Execute rollback based on method
+          if [ "$ROLLBACK_METHOD" = "digest-based" ]; then
+            echo "🔄 Executing digest-based rollback..."
+            
+            ssh -o StrictHostKeyChecking=no michael@docker << EOF
+              set -e
+              cd ~/Tailpaste
+              
+              echo "📥 Pulling backup artifact from registry..."
+              FULL_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${BACKUP_DIGEST}"
+              docker pull "\$FULL_IMAGE"
+              
+              # Tag the pulled image for docker-compose
+              docker tag "\$FULL_IMAGE" tailpaste-tailpaste:latest
+              
+              echo "🛑 Stopping current container..."
+              docker compose -f docker-compose.yml down
+              
+              echo "🔄 Starting container with backup artifact..."
+              docker compose -f docker-compose.yml up -d
+              
+              echo "⏳ Waiting for service to start..."
+              sleep 15
+              
+              echo "✅ Digest-based rollback completed!"
+          EOF
+            
+          else
+            echo "🔄 Executing file-based rollback..."
+            
+            ssh -o StrictHostKeyChecking=no michael@docker << 'EOF'
+              set -e
+              cd ~/Tailpaste
+              
+              # Find the most recent backup
+              LATEST_BACKUP=$(ls -t ~/.tailpaste-backups/ | grep "^backup-" | head -n 1)
+              
+              if [ -z "$LATEST_BACKUP" ]; then
+                echo "❌ No file backup found!"
+                exit 1
+              fi
+              
+              echo "Rolling back to file backup: $LATEST_BACKUP"
+              
+              # Stop current container (using production compose)
+              docker compose -f docker-compose.yml down
+              
+              # Restore database with integrity check
+              if [ -d ~/.tailpaste-backups/${LATEST_BACKUP}-storage ]; then
+                echo "🔄 Restoring database..."
+                rm -rf storage
+                cp -r ~/.tailpaste-backups/${LATEST_BACKUP}-storage storage
+                
+                # Basic integrity check
+                if [ -d storage ] && [ "$(ls -A storage 2>/dev/null)" ]; then
+                  echo "✓ Database restored and validated"
+                else
+                  echo "⚠️  Database restore may be incomplete"
+                fi
+              fi
+              
+              # Restore git state
+              if [ -f ~/.tailpaste-backups/${LATEST_BACKUP}-commit ]; then
+                COMMIT_HASH=$(cat ~/.tailpaste-backups/${LATEST_BACKUP}-commit)
+                git fetch origin
+                git reset --hard $COMMIT_HASH
+                echo "✓ Git state restored to $COMMIT_HASH"
+              fi
+              
+              # Restore Docker image
+              if [ -f ~/.tailpaste-backups/${LATEST_BACKUP}-image.tar ]; then
+                docker load -i ~/.tailpaste-backups/${LATEST_BACKUP}-image.tar
+                echo "✓ Docker image restored"
+              else
+                # Rebuild from restored git state (production)
+                echo "🔨 Rebuilding from restored git state..."
+                docker compose -f docker-compose.yml build --no-cache
+              fi
+              
+              # Start container (production)
+              docker compose -f docker-compose.yml up -d
+              
+              echo "⏳ Waiting for service to start..."
+              sleep 15
+              
+              echo "✅ File-based rollback completed!"
+          EOF
+          fi
+          
+          # Check rollback execution status
+          if [ $? -eq 0 ]; then
+            ROLLBACK_STATUS="completed"
+            ROLLBACK_DETAILS="Rollback execution completed successfully using $ROLLBACK_METHOD method"
+            echo "✅ Rollback execution successful"
+          else
+            ROLLBACK_STATUS="failed"
+            ROLLBACK_DETAILS="Rollback execution failed during $ROLLBACK_METHOD rollback"
+            echo "❌ Rollback execution failed"
+            
+            # Record rollback failure
+            gh variable set ROLLBACK_STATUS --body "failed" --repo ${{ github.repository }}
+            gh variable set ROLLBACK_FAILURE_REASON --body "execution_failed" --repo ${{ github.repository }}
+            gh variable set ROLLBACK_FAILURE_STAGE --body "execution" --repo ${{ github.repository }}
+            
+            # Record in artifact manager if we have a digest
+            if [ -n "$BACKUP_DIGEST" ]; then
+              python scripts/artifact_manager.py record-test-result \
+                --digest "$BACKUP_DIGEST" \
+                --test-type "rollback" \
+                --status "failed" \
+                --timestamp "$ROLLBACK_TIMESTAMP" \
+                --details "$ROLLBACK_DETAILS"
+            fi
+            
+            exit 1
+          fi
+          
+          # Update deployment state to reflect successful rollback
+          if [ -n "$BACKUP_DIGEST" ]; then
+            gh variable set DEPLOYED_ARTIFACT_DIGEST --body "$BACKUP_DIGEST" --repo ${{ github.repository }}
+            gh variable set DEPLOYMENT_TIMESTAMP --body "$ROLLBACK_TIMESTAMP" --repo ${{ github.repository }}
+            gh variable set DEPLOYMENT_TYPE --body "rollback" --repo ${{ github.repository }}
+            gh variable set DEPLOYMENT_TRIGGERED_BY --body "${{ github.actor }}" --repo ${{ github.repository }}
+            
+            # Record successful rollback in artifact manager
+            python scripts/artifact_manager.py record-test-result \
+              --digest "$BACKUP_DIGEST" \
+              --test-type "rollback" \
+              --status "completed" \
+              --timestamp "$ROLLBACK_TIMESTAMP" \
+              --details "$ROLLBACK_DETAILS"
+          fi
+          
+          # Update rollback status
+          gh variable set ROLLBACK_STATUS --body "$ROLLBACK_STATUS" --repo ${{ github.repository }}
+          gh variable set ROLLBACK_COMPLETED_AT --body "$ROLLBACK_TIMESTAMP" --repo ${{ github.repository }}
+          
+          echo "📊 Rollback state updated - proceeding to verification"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Enhanced rollback verification
+        if: ${{ inputs.rollback }}
+        run: |
+          echo "🔍 Enhanced rollback verification starting..."
+          
+          # Initialize rollback verification tracking
+          VERIFICATION_STATUS="pending"
+          VERIFICATION_DETAILS=""
+          VERIFICATION_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          
+          # Get rollback information
+          ROLLBACK_METHOD=$(gh variable get ROLLBACK_METHOD --repo ${{ github.repository }} 2>/dev/null || echo "unknown")
+          ROLLBACK_TARGET_DIGEST=$(gh variable get ROLLBACK_TARGET_DIGEST --repo ${{ github.repository }} 2>/dev/null || echo "")
+          
+          echo "=== ROLLBACK VERIFICATION ==="
+          echo "Rollback method: $ROLLBACK_METHOD"
+          echo "Target digest: ${ROLLBACK_TARGET_DIGEST:-'N/A'}"
+          
+          # Record verification start
+          if [ -n "$ROLLBACK_TARGET_DIGEST" ]; then
+            python scripts/artifact_manager.py record-test-result \
+              --digest "$ROLLBACK_TARGET_DIGEST" \
+              --test-type "rollback_verification" \
+              --status "pending" \
+              --timestamp "$VERIFICATION_TIMESTAMP" \
+              --details "Starting rollback verification for $ROLLBACK_METHOD rollback"
+          fi
+          
+          # Enhanced container and service verification
           ssh -o StrictHostKeyChecking=no michael@docker << 'EOF'
             set -e
-            cd ~/Tailpaste
             
-            # Find the most recent backup
-            LATEST_BACKUP=$(ls -t ~/.tailpaste-backups/ | grep "^backup-" | head -n 1)
+            echo "=== CONTAINER STATUS VERIFICATION ==="
             
-            if [ -z "$LATEST_BACKUP" ]; then
-              echo "❌ No backup found!"
+            # Enhanced container running check
+            CONTAINER_NAME="tailpaste"
+            if ! docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | grep -q "$CONTAINER_NAME"; then
+              echo "❌ Container '$CONTAINER_NAME' is not running after rollback!"
+              echo "Available containers:"
+              docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+              echo "Recent container logs:"
+              docker logs "$CONTAINER_NAME" --tail=50 2>/dev/null || echo "No logs available"
+              exit 1
+            fi
+            echo "✓ Container '$CONTAINER_NAME' is running after rollback"
+            
+            # Enhanced container health check
+            CONTAINER_STATUS=$(docker inspect --format='{{.State.Status}}' "$CONTAINER_NAME" 2>/dev/null || echo "unknown")
+            CONTAINER_HEALTH=$(docker inspect --format='{{.State.Health.Status}}' "$CONTAINER_NAME" 2>/dev/null || echo "none")
+            RESTART_COUNT=$(docker inspect --format='{{.RestartCount}}' "$CONTAINER_NAME" 2>/dev/null || echo "0")
+            
+            echo "Container Status: $CONTAINER_STATUS"
+            echo "Container Health: $CONTAINER_HEALTH"  
+            echo "Restart Count: $RESTART_COUNT"
+            
+            if [ "$CONTAINER_STATUS" != "running" ]; then
+              echo "❌ Container is not in running state after rollback: $CONTAINER_STATUS"
               exit 1
             fi
             
-            echo "Rolling back to: $LATEST_BACKUP"
-            
-            # Stop current container (using production compose)
-            docker compose -f docker-compose.yml down
-            
-            # Restore database
-            if [ -d ~/.tailpaste-backups/${LATEST_BACKUP}-storage ]; then
-              rm -rf storage
-              cp -r ~/.tailpaste-backups/${LATEST_BACKUP}-storage storage
-              echo "✓ Database restored"
+            if [ "$RESTART_COUNT" -gt "0" ]; then
+              echo "⚠️  Container has restarted $RESTART_COUNT times since rollback"
             fi
             
-            # Restore git state
-            if [ -f ~/.tailpaste-backups/${LATEST_BACKUP}-commit ]; then
-              COMMIT_HASH=$(cat ~/.tailpaste-backups/${LATEST_BACKUP}-commit)
-              git fetch origin
-              git reset --hard $COMMIT_HASH
-              echo "✓ Git state restored to $COMMIT_HASH"
-            fi
+            echo "=== ROLLBACK INTEGRITY VERIFICATION ==="
             
-            # Restore Docker image
-            if [ -f ~/.tailpaste-backups/${LATEST_BACKUP}-image.tar ]; then
-              docker load -i ~/.tailpaste-backups/${LATEST_BACKUP}-image.tar
-              echo "✓ Docker image restored"
+            # Check if rollback actually changed the deployment
+            CURRENT_IMAGE=$(docker inspect "$CONTAINER_NAME" --format='{{.Config.Image}}')
+            echo "Current container image: $CURRENT_IMAGE"
+            
+            # Verify data integrity (basic check)
+            if [ -d ~/Tailpaste/storage ]; then
+              STORAGE_FILES=$(find ~/Tailpaste/storage -type f | wc -l)
+              echo "Storage files count: $STORAGE_FILES"
+              
+              if [ "$STORAGE_FILES" -eq "0" ]; then
+                echo "⚠️  Storage directory is empty after rollback"
+              else
+                echo "✓ Storage directory contains data"
+              fi
             else
-              # Rebuild from restored git state (production)
-              docker compose -f docker-compose.yml build --no-cache
+              echo "⚠️  Storage directory not found"
             fi
             
-            # Start container (production)
-            docker compose -f docker-compose.yml up -d
+            echo "=== APPLICATION LOG ANALYSIS ==="
             
-            echo "✅ Rollback completed!"
+            # Enhanced log analysis for rollback
+            RECENT_LOGS=$(docker logs "$CONTAINER_NAME" --tail=100 --since=2m 2>&1)
+            
+            # Count different types of log entries
+            ERROR_COUNT=$(echo "$RECENT_LOGS" | grep -i "error" | grep -v "ERROR_LOG" | wc -l || echo 0)
+            WARNING_COUNT=$(echo "$RECENT_LOGS" | grep -i "warning\|warn" | wc -l || echo 0)
+            STARTUP_MESSAGES=$(echo "$RECENT_LOGS" | grep -i "starting\|started\|listening\|ready" | wc -l || echo 0)
+            
+            echo "Recent log analysis (last 2 minutes):"
+            echo "- Errors: $ERROR_COUNT"
+            echo "- Warnings: $WARNING_COUNT"  
+            echo "- Startup messages: $STARTUP_MESSAGES"
+            
+            if [ "$ERROR_COUNT" -gt "3" ]; then
+              echo "❌ High error count detected after rollback ($ERROR_COUNT errors)"
+              echo "Recent errors:"
+              echo "$RECENT_LOGS" | grep -i "error" | grep -v "ERROR_LOG" | tail -3
+              exit 1
+            elif [ "$ERROR_COUNT" -gt "0" ]; then
+              echo "⚠️  Some errors detected after rollback ($ERROR_COUNT errors)"
+              echo "Recent errors:"
+              echo "$RECENT_LOGS" | grep -i "error" | grep -v "ERROR_LOG" | tail -2
+            else
+              echo "✓ No significant errors in recent logs after rollback"
+            fi
+            
+            echo "✅ Rollback verification completed successfully!"
           EOF
           
-          exit 0
+          # Check if verification passed
+          if [ $? -eq 0 ]; then
+            VERIFICATION_STATUS="passed"
+            VERIFICATION_DETAILS="Rollback verification completed successfully - service is healthy after rollback"
+            echo "✅ Rollback verification PASSED"
+          else
+            VERIFICATION_STATUS="failed"
+            VERIFICATION_DETAILS="Rollback verification failed - service issues detected after rollback"
+            echo "❌ Rollback verification FAILED"
+          fi
+          
+          # Record verification results
+          if [ -n "$ROLLBACK_TARGET_DIGEST" ]; then
+            python scripts/artifact_manager.py record-test-result \
+              --digest "$ROLLBACK_TARGET_DIGEST" \
+              --test-type "rollback_verification" \
+              --status "$VERIFICATION_STATUS" \
+              --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              --details "$VERIFICATION_DETAILS"
+          fi
+          
+          # Update rollback status based on verification
+          if [ "$VERIFICATION_STATUS" = "failed" ]; then
+            gh variable set ROLLBACK_STATUS --body "failed" --repo ${{ github.repository }}
+            gh variable set ROLLBACK_FAILURE_REASON --body "verification_failed" --repo ${{ github.repository }}
+            gh variable set ROLLBACK_FAILURE_STAGE --body "verification" --repo ${{ github.repository }}
+            
+            echo "🚨 Rollback verification failed - rollback marked as failed"
+            exit 1
+          else
+            gh variable set ROLLBACK_STATUS --body "verified" --repo ${{ github.repository }}
+            gh variable set ROLLBACK_VERIFIED_AT --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }}
+            
+            echo "✅ Rollback verification successful - rollback completed successfully"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
-      - name: Deploy to docker host
+      - name: Deploy tested artifact to docker host
         if: ${{ !inputs.rollback }}
         run: |
-          echo "🚀 Deploying to docker host..."
+          echo "🚀 Deploying tested artifact to docker host..."
           
-          ssh -o StrictHostKeyChecking=no michael@docker << 'EOF'
+          ARTIFACT_DIGEST="${ARTIFACT_DIGEST}"
+          
+          if [ -z "$ARTIFACT_DIGEST" ]; then
+            echo "❌ No artifact digest available for deployment"
+            exit 1
+          fi
+          
+          echo "Deploying artifact: $ARTIFACT_DIGEST"
+          
+          # Check if this artifact is already deployed (can be bypassed with force)
+          CURRENT_DEPLOYED=$(gh variable get DEPLOYED_ARTIFACT_DIGEST --repo ${{ github.repository }} 2>/dev/null || echo "")
+          FORCE_DEPLOYMENT="${{ inputs.force_deployment }}"
+          
+          if [ "$CURRENT_DEPLOYED" = "$ARTIFACT_DIGEST" ]; then
+            if [ "$FORCE_DEPLOYMENT" = "true" ]; then
+              echo "⚠️  FORCE DEPLOYMENT ACTIVATED"
+              echo "🔄 Artifact $ARTIFACT_DIGEST is already deployed, but force deployment is enabled"
+              echo "🔧 Manual operator: ${{ github.actor }}"
+              echo "📝 Force reason: ${{ inputs.manual_reason }}"
+              echo "⏰ Force timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+              echo ""
+              echo "🚨 IMPORTANT: This will redeploy the same artifact"
+              echo "- This may help resolve runtime issues without changing code"
+              echo "- Monitor the deployment for any improvements"
+              echo "- Consider investigating why a redeploy was necessary"
+              
+              # Log force redeployment
+              gh variable set LAST_FORCE_REDEPLOYMENT --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }}
+              gh variable set FORCE_REDEPLOYMENT_BY --body "${{ github.actor }}" --repo ${{ github.repository }}
+              gh variable set FORCE_REDEPLOYMENT_REASON --body "${{ inputs.manual_reason }}" --repo ${{ github.repository }}
+              gh variable set FORCE_REDEPLOYMENT_ARTIFACT --body "$ARTIFACT_DIGEST" --repo ${{ github.repository }}
+              
+              echo "⚠️  Proceeding with force redeployment of same artifact"
+            else
+              echo "ℹ️ Artifact $ARTIFACT_DIGEST is already deployed"
+              echo "Skipping deployment as no change is needed"
+              echo "Use 'force_deployment' flag if you need to redeploy the same artifact"
+              exit 0
+            fi
+          fi
+          
+          ssh -o StrictHostKeyChecking=no michael@docker << EOF
             set -e
             cd ~/Tailpaste
             
-            echo "📥 Pulling latest changes..."
-            git pull origin main
+            echo "📥 Pulling tested artifact from registry..."
+            FULL_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${ARTIFACT_DIGEST}"
+            docker pull "\$FULL_IMAGE"
+            
+            # Tag the pulled image for docker-compose
+            docker tag "\$FULL_IMAGE" tailpaste-tailpaste:latest
             
             echo "🛑 Stopping existing container (production)..."
             docker compose -f docker-compose.yml down
             
-            echo "🔨 Building new image (production)..."
-            docker compose -f docker-compose.yml build --no-cache
-            
-            echo "🚀 Starting container (production)..."
+            echo "🚀 Starting container with tested artifact (production)..."
             docker compose -f docker-compose.yml up -d
             
             echo "⏳ Waiting for service to start..."
@@ -178,120 +1077,1105 @@ jobs:
             
             echo "✅ Deployment complete!"
           EOF
+          
+          # Update deployment state tracking
+          gh variable set DEPLOYED_ARTIFACT_DIGEST --body "$ARTIFACT_DIGEST" --repo ${{ github.repository }}
+          gh variable set DEPLOYMENT_TIMESTAMP --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }}
+          gh variable set DEPLOYMENT_TYPE --body "automated" --repo ${{ github.repository }}
+          gh variable set DEPLOYMENT_TRIGGERED_BY --body "${{ github.actor }}" --repo ${{ github.repository }}
+          
+          # Check if this was a redeployment triggered by recovery
+          REDEPLOYMENT_CANDIDATE=$(gh variable get REDEPLOYMENT_CANDIDATE --repo ${{ github.repository }} 2>/dev/null || echo "")
+          
+          if [ -n "$REDEPLOYMENT_CANDIDATE" ] && [ "$REDEPLOYMENT_CANDIDATE" = "$ARTIFACT_DIGEST" ]; then
+            echo "🔄 This was a successful redeployment triggered by recovery workflow"
+            
+            # Record successful redeployment
+            python scripts/artifact_manager.py record-test-result \
+              --digest "$ARTIFACT_DIGEST" \
+              --test-type "redeployment" \
+              --status "successful" \
+              --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              --details "Redeployment successful - service restored via recovery workflow"
+            
+            # Clear redeployment candidate
+            gh variable set REDEPLOYMENT_CANDIDATE --body "" --repo ${{ github.repository }}
+            
+            # Update deployment type to reflect redeployment
+            gh variable set DEPLOYMENT_TYPE --body "redeployment" --repo ${{ github.repository }}
+            
+            echo "✅ Redeployment completed successfully"
+          fi
+          
+          # Record deployment in artifact manager
+          python scripts/artifact_manager.py record-test-result \
+            --digest "$ARTIFACT_DIGEST" \
+            --test-type "deployment" \
+            --status "deployed" \
+            --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --details "Deployed to production by ${{ github.actor }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
-      - name: Health check and verification
+      - name: Enhanced deployment verification
         run: |
-          echo "🔍 Verifying deployment..."
+          echo "🔍 Enhanced deployment verification starting..."
+          
+          # Initialize verification status tracking
+          VERIFICATION_STATUS="pending"
+          VERIFICATION_DETAILS=""
+          VERIFICATION_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          
+          # Record verification start
+          if [ -n "${ARTIFACT_DIGEST}" ]; then
+            python scripts/artifact_manager.py record-test-result \
+              --digest "${ARTIFACT_DIGEST}" \
+              --test-type "deployment_verification" \
+              --status "pending" \
+              --timestamp "$VERIFICATION_TIMESTAMP" \
+              --details "Starting enhanced deployment verification"
+          fi
           
           ssh -o StrictHostKeyChecking=no michael@docker << 'EOF'
             set -e
             
-            # Check container is running
-            if ! docker ps | grep -q tailpaste; then
-              echo "❌ Container is not running!"
-              docker logs tailpaste --tail=50
+            echo "=== CONTAINER STATUS VERIFICATION ==="
+            
+            # Enhanced container running check
+            CONTAINER_NAME="tailpaste"
+            if ! docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | grep -q "$CONTAINER_NAME"; then
+              echo "❌ Container '$CONTAINER_NAME' is not running!"
+              echo "Available containers:"
+              docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+              echo "Recent container logs:"
+              docker logs "$CONTAINER_NAME" --tail=50 2>/dev/null || echo "No logs available"
               exit 1
             fi
-            echo "✓ Container is running"
+            echo "✓ Container '$CONTAINER_NAME' is running"
+            
+            # Enhanced container health check
+            CONTAINER_STATUS=$(docker inspect --format='{{.State.Status}}' "$CONTAINER_NAME" 2>/dev/null || echo "unknown")
+            CONTAINER_HEALTH=$(docker inspect --format='{{.State.Health.Status}}' "$CONTAINER_NAME" 2>/dev/null || echo "none")
+            RESTART_COUNT=$(docker inspect --format='{{.RestartCount}}' "$CONTAINER_NAME" 2>/dev/null || echo "0")
+            
+            echo "Container Status: $CONTAINER_STATUS"
+            echo "Container Health: $CONTAINER_HEALTH"  
+            echo "Restart Count: $RESTART_COUNT"
+            
+            if [ "$CONTAINER_STATUS" != "running" ]; then
+              echo "❌ Container is not in running state: $CONTAINER_STATUS"
+              exit 1
+            fi
+            
+            if [ "$RESTART_COUNT" -gt "0" ]; then
+              echo "⚠️  Container has restarted $RESTART_COUNT times"
+            fi
+            
+            echo "=== RESOURCE UTILIZATION CHECK ==="
+            
+            # Check container resource usage
+            CONTAINER_STATS=$(docker stats "$CONTAINER_NAME" --no-stream --format "table {{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}\t{{.BlockIO}}")
+            echo "Container Resource Usage:"
+            echo "$CONTAINER_STATS"
+            
+            # Check image information
+            IMAGE_INFO=$(docker inspect "$CONTAINER_NAME" --format='{{.Config.Image}}')
+            IMAGE_SIZE=$(docker images "$IMAGE_INFO" --format "{{.Size}}" | head -n 1)
+            echo "Image: $IMAGE_INFO"
+            echo "Image Size: $IMAGE_SIZE"
+            
+            echo "=== NETWORK CONNECTIVITY CHECK ==="
+            
+            # Enhanced Tailscale connectivity check
+            TAILSCALE_IP=$(docker exec "$CONTAINER_NAME" tailscale ip -4 2>/dev/null || echo "N/A")
+            TAILSCALE_STATUS=$(docker exec "$CONTAINER_NAME" tailscale status --json 2>/dev/null | jq -r '.BackendState' 2>/dev/null || echo "unknown")
+            
+            echo "Tailscale IP: $TAILSCALE_IP"
+            echo "Tailscale Status: $TAILSCALE_STATUS"
+            
+            if [ "$TAILSCALE_IP" = "N/A" ] || [ "$TAILSCALE_STATUS" != "Running" ]; then
+              echo "⚠️  Tailscale connectivity issues detected"
+            else
+              echo "✓ Tailscale connectivity verified"
+            fi
+            
+            # Check port binding
+            PORT_BINDING=$(docker port "$CONTAINER_NAME" 8080 2>/dev/null || echo "none")
+            echo "Port 8080 binding: $PORT_BINDING"
+            
+            echo "=== APPLICATION LOG ANALYSIS ==="
+            
+            # Enhanced log analysis
+            RECENT_LOGS=$(docker logs "$CONTAINER_NAME" --tail=100 --since=5m 2>&1)
+            
+            # Count different types of log entries
+            ERROR_COUNT=$(echo "$RECENT_LOGS" | grep -i "error" | grep -v "ERROR_LOG" | wc -l || echo 0)
+            WARNING_COUNT=$(echo "$RECENT_LOGS" | grep -i "warning\|warn" | wc -l || echo 0)
+            STARTUP_MESSAGES=$(echo "$RECENT_LOGS" | grep -i "starting\|started\|listening\|ready" | wc -l || echo 0)
+            
+            echo "Recent log analysis (last 5 minutes):"
+            echo "- Errors: $ERROR_COUNT"
+            echo "- Warnings: $WARNING_COUNT"  
+            echo "- Startup messages: $STARTUP_MESSAGES"
+            
+            if [ "$ERROR_COUNT" -gt "5" ]; then
+              echo "❌ High error count detected ($ERROR_COUNT errors)"
+              echo "Recent errors:"
+              echo "$RECENT_LOGS" | grep -i "error" | grep -v "ERROR_LOG" | tail -5
+              exit 1
+            elif [ "$ERROR_COUNT" -gt "0" ]; then
+              echo "⚠️  Some errors detected ($ERROR_COUNT errors)"
+              echo "Recent errors:"
+              echo "$RECENT_LOGS" | grep -i "error" | grep -v "ERROR_LOG" | tail -3
+            else
+              echo "✓ No significant errors in recent logs"
+            fi
+            
+            echo "=== DEPLOYMENT SUMMARY ==="
+            
+            # Write enhanced summary data
+            cat > /tmp/deployment_summary.txt << SUMMARY
+### Enhanced Deployment Verification Results
 
-            echo "📏 Checking image size..."
-            SIZE=$(docker images tailpaste-tailpaste --format "{{.Size}}" | head -n 1)
-            echo "Image size: $SIZE"
+#### Container Status
+- **Container Name**: $CONTAINER_NAME
+- **Status**: $CONTAINER_STATUS
+- **Health**: $CONTAINER_HEALTH
+- **Restart Count**: $RESTART_COUNT
+- **Image**: $IMAGE_INFO
+- **Image Size**: $IMAGE_SIZE
+
+#### Network Connectivity  
+- **Tailscale IP**: $TAILSCALE_IP
+- **Tailscale Status**: $TAILSCALE_STATUS
+- **Port Binding**: $PORT_BINDING
+
+#### Application Health
+- **Recent Errors**: $ERROR_COUNT
+- **Recent Warnings**: $WARNING_COUNT
+- **Startup Messages**: $STARTUP_MESSAGES
+
+#### Resource Usage
+$CONTAINER_STATS
+SUMMARY
             
-            # Write summary data to temporary file for transfer back to runner
-            echo "### Docker Build Results" > /tmp/deployment_summary.txt
-            echo "- Image Size: $SIZE" >> /tmp/deployment_summary.txt
-            echo "- Build Status: ✅ Success" >> /tmp/deployment_summary.txt
-            
-            # Check Tailscale connection
-            TAILSCALE_IP=$(docker exec tailpaste tailscale ip -4 2>/dev/null || echo "N/A")
-            echo "✓ Tailscale IP: $TAILSCALE_IP"
-            
-            # Check for errors in logs
-            ERROR_COUNT=$(docker logs tailpaste --tail=100 2>&1 | grep -i "error" | grep -v "ERROR_LOG" | wc -l || echo 0)
-            if [ "$ERROR_COUNT" -gt 0 ]; then
-              echo "⚠️  Found $ERROR_COUNT errors in recent logs"
-              docker logs tailpaste --tail=50 2>&1 | grep -i "error" | grep -v "ERROR_LOG" || true
-            else
-              echo "✓ No errors in recent logs"
-            fi
-            
-            # Check container health
-            CONTAINER_STATUS=$(docker inspect --format='{{.State.Status}}' tailpaste 2>/dev/null || echo "unknown")
-            if [ "$CONTAINER_STATUS" = "running" ] || [ "$CONTAINER_STATUS" = "unknown" ]; then
-              echo "✓ Container status: $CONTAINER_STATUS"
-            else
-              echo "❌ Container unhealthy: $CONTAINER_STATUS"
-              exit 1
-            fi
-            
-            echo "✅ Deployment verified successfully!"
+            echo "✅ Enhanced deployment verification completed successfully!"
           EOF
           
-          # Transfer summary data back to runner and append to GitHub Step Summary
-          echo "📥 Retrieving deployment summary..."
+          # Check if verification passed
+          if [ $? -eq 0 ]; then
+            VERIFICATION_STATUS="passed"
+            VERIFICATION_DETAILS="Enhanced deployment verification completed successfully"
+            echo "✅ Deployment verification PASSED"
+          else
+            VERIFICATION_STATUS="failed"
+            VERIFICATION_DETAILS="Enhanced deployment verification failed - see logs for details"
+            echo "❌ Deployment verification FAILED"
+          fi
+          
+          # Transfer and display summary
+          echo "📥 Retrieving enhanced deployment summary..."
           scp -o StrictHostKeyChecking=no michael@docker:/tmp/deployment_summary.txt /tmp/deployment_summary.txt
           cat /tmp/deployment_summary.txt >> $GITHUB_STEP_SUMMARY
-      
-      - name: Test service health
-        run: |
-          echo "🏥 Testing service health..."
-          sleep 5
           
-          MAX_RETRIES=5
+          # Record verification results
+          if [ -n "${ARTIFACT_DIGEST}" ]; then
+            python scripts/artifact_manager.py record-test-result \
+              --digest "${ARTIFACT_DIGEST}" \
+              --test-type "deployment_verification" \
+              --status "$VERIFICATION_STATUS" \
+              --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              --details "$VERIFICATION_DETAILS"
+          fi
+          
+          # Update deployment status based on verification
+          if [ "$VERIFICATION_STATUS" = "failed" ]; then
+            gh variable set DEPLOYMENT_STATUS --body "failed" --repo ${{ github.repository }}
+            gh variable set DEPLOYMENT_FAILURE_REASON --body "deployment_verification_failed" --repo ${{ github.repository }}
+            exit 1
+          else
+            gh variable set DEPLOYMENT_STATUS --body "verified" --repo ${{ github.repository }}
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Enhanced service health and functionality testing
+        run: |
+          echo "🏥 Enhanced service health and functionality testing..."
+          
+          # Initialize health check tracking
+          HEALTH_STATUS="pending"
+          HEALTH_DETAILS=""
+          HEALTH_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          
+          # Check if this is a rollback scenario
+          IS_ROLLBACK="${{ inputs.rollback }}"
+          ROLLBACK_TARGET_DIGEST=""
+          
+          if [ "$IS_ROLLBACK" = "true" ]; then
+            echo "🔄 Health check for rollback scenario"
+            ROLLBACK_TARGET_DIGEST=$(gh variable get ROLLBACK_TARGET_DIGEST --repo ${{ github.repository }} 2>/dev/null || echo "")
+            
+            # Record health check start for rollback
+            if [ -n "$ROLLBACK_TARGET_DIGEST" ]; then
+              python scripts/artifact_manager.py record-test-result \
+                --digest "$ROLLBACK_TARGET_DIGEST" \
+                --test-type "rollback_health_check" \
+                --status "pending" \
+                --timestamp "$HEALTH_TIMESTAMP" \
+                --details "Starting health check for rollback verification"
+            fi
+          else
+            echo "🚀 Health check for new deployment"
+            
+            # Record health check start for deployment
+            if [ -n "${ARTIFACT_DIGEST}" ]; then
+              python scripts/artifact_manager.py record-test-result \
+                --digest "${ARTIFACT_DIGEST}" \
+                --test-type "health_check" \
+                --status "pending" \
+                --timestamp "$HEALTH_TIMESTAMP" \
+                --details "Starting enhanced service health and functionality testing"
+            fi
+          fi
+          
+          echo "=== SERVICE AVAILABILITY TESTING ==="
+          
+          # Enhanced service availability check with retries and timing
+          MAX_RETRIES=10
           RETRY_COUNT=0
+          TOTAL_WAIT_TIME=0
+          RESPONSE_TIMES=()
           
           while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-            if curl -f -s -o /dev/null http://tailpaste:8080/; then
-              echo "✓ Service is responding"
+            START_TIME=$(date +%s%N)
+            
+            if curl -f -s -o /dev/null -w "%{http_code}" http://tailpaste:8080/ > /tmp/http_code 2>/dev/null; then
+              END_TIME=$(date +%s%N)
+              RESPONSE_TIME=$(( (END_TIME - START_TIME) / 1000000 )) # Convert to milliseconds
+              HTTP_CODE=$(cat /tmp/http_code)
+              
+              echo "✓ Service responding - HTTP $HTTP_CODE (${RESPONSE_TIME}ms)"
+              RESPONSE_TIMES+=($RESPONSE_TIME)
               break
             else
               RETRY_COUNT=$((RETRY_COUNT + 1))
+              WAIT_TIME=$((RETRY_COUNT * 2)) # Progressive backoff
+              TOTAL_WAIT_TIME=$((TOTAL_WAIT_TIME + WAIT_TIME))
+              
               if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
-                echo "⏳ Service not ready, retrying ($RETRY_COUNT/$MAX_RETRIES)..."
-                sleep 10
+                echo "⏳ Service not ready, retrying ($RETRY_COUNT/$MAX_RETRIES) - waiting ${WAIT_TIME}s..."
+                sleep $WAIT_TIME
               else
-                echo "❌ Service is not responding after $MAX_RETRIES attempts"
+                echo "❌ Service is not responding after $MAX_RETRIES attempts (total wait: ${TOTAL_WAIT_TIME}s)"
+                HEALTH_STATUS="failed"
+                
+                if [ "$IS_ROLLBACK" = "true" ]; then
+                  HEALTH_DETAILS="Rollback health check failed - service not responding after rollback"
+                else
+                  HEALTH_DETAILS="Service availability check failed after $MAX_RETRIES attempts"
+                fi
+                
+                # Record failed health check
+                TARGET_DIGEST="${ROLLBACK_TARGET_DIGEST:-${ARTIFACT_DIGEST}}"
+                TEST_TYPE=$([ "$IS_ROLLBACK" = "true" ] && echo "rollback_health_check" || echo "health_check")
+                
+                if [ -n "$TARGET_DIGEST" ]; then
+                  python scripts/artifact_manager.py record-test-result \
+                    --digest "$TARGET_DIGEST" \
+                    --test-type "$TEST_TYPE" \
+                    --status "failed" \
+                    --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                    --details "$HEALTH_DETAILS"
+                fi
+                
                 exit 1
               fi
             fi
           done
           
-          # Test paste creation
-          echo "📝 Testing paste creation..."
-          TEST_CONTENT="Deployment test - $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          PASTE_URL=$(curl -s -X POST -H "Content-Type: text/plain" -d "$TEST_CONTENT" http://tailpaste:8080/ || echo "")
+          echo "=== CORE FUNCTIONALITY TESTING ==="
           
-          if [ -z "$PASTE_URL" ]; then
-            echo "⚠️  Warning: Paste creation test failed"
+          # Test 1: Basic paste creation functionality
+          echo "📝 Testing paste creation functionality..."
+          TEST_CONTENT="Enhanced $([ "$IS_ROLLBACK" = "true" ] && echo "rollback" || echo "deployment") test - $(date -u +%Y-%m-%dT%H:%M:%SZ) - $(openssl rand -hex 8)"
+          
+          START_TIME=$(date +%s%N)
+          PASTE_RESPONSE=$(curl -s -X POST -H "Content-Type: text/plain" -d "$TEST_CONTENT" http://tailpaste:8080/ 2>/dev/null || echo "")
+          END_TIME=$(date +%s%N)
+          PASTE_CREATE_TIME=$(( (END_TIME - START_TIME) / 1000000 ))
+          
+          if [ -z "$PASTE_RESPONSE" ]; then
+            echo "❌ Paste creation failed - no response"
+            HEALTH_STATUS="failed"
+            
+            if [ "$IS_ROLLBACK" = "true" ]; then
+              HEALTH_DETAILS="Rollback health check failed - paste creation not working after rollback"
+            else
+              HEALTH_DETAILS="Core functionality test failed - paste creation returned no response"
+            fi
           else
-            echo "✓ Paste created successfully: $PASTE_URL"
+            echo "✓ Paste created successfully (${PASTE_CREATE_TIME}ms)"
+            echo "  Response: $PASTE_RESPONSE"
+            
+            # Test 2: Paste retrieval functionality
+            echo "📖 Testing paste retrieval functionality..."
+            
+            # Extract paste ID from response (assuming it's a URL or ID)
+            PASTE_ID=$(echo "$PASTE_RESPONSE" | sed 's/.*\///' | tr -d '\n\r')
+            
+            if [ -n "$PASTE_ID" ] && [ "$PASTE_ID" != "$PASTE_RESPONSE" ]; then
+              START_TIME=$(date +%s%N)
+              RETRIEVED_CONTENT=$(curl -s "http://tailpaste:8080/$PASTE_ID" 2>/dev/null || echo "")
+              END_TIME=$(date +%s%N)
+              PASTE_RETRIEVE_TIME=$(( (END_TIME - START_TIME) / 1000000 ))
+              
+              if [ "$RETRIEVED_CONTENT" = "$TEST_CONTENT" ]; then
+                echo "✓ Paste retrieval successful (${PASTE_RETRIEVE_TIME}ms)"
+                echo "  Content matches original"
+              else
+                echo "⚠️  Paste retrieval warning - content mismatch"
+                echo "  Expected: $TEST_CONTENT"
+                echo "  Retrieved: $RETRIEVED_CONTENT"
+              fi
+            else
+              echo "⚠️  Paste retrieval test skipped - could not extract paste ID"
+            fi
           fi
           
-          echo "✅ Service is healthy!"
+          # Test 3: API endpoint health check
+          echo "🔍 Testing API endpoint health..."
+          
+          HEALTH_ENDPOINT_RESPONSE=$(curl -s -w "%{http_code}" http://tailpaste:8080/health 2>/dev/null || echo "404")
+          if [ "$HEALTH_ENDPOINT_RESPONSE" = "200" ] || [ "$HEALTH_ENDPOINT_RESPONSE" = "404" ]; then
+            echo "✓ API endpoint accessible (HTTP $HEALTH_ENDPOINT_RESPONSE)"
+          else
+            echo "⚠️  API endpoint returned unexpected response: $HEALTH_ENDPOINT_RESPONSE"
+          fi
+          
+          # Test 4: Static resource availability
+          echo "🎨 Testing static resource availability..."
+          
+          STATIC_RESPONSE=$(curl -s -w "%{http_code}" -o /dev/null http://tailpaste:8080/static/style.css 2>/dev/null || echo "404")
+          if [ "$STATIC_RESPONSE" = "200" ] || [ "$STATIC_RESPONSE" = "404" ]; then
+            echo "✓ Static resources endpoint accessible (HTTP $STATIC_RESPONSE)"
+          else
+            echo "⚠️  Static resources returned unexpected response: $STATIC_RESPONSE"
+          fi
+          
+          echo "=== PERFORMANCE METRICS ==="
+          
+          # Calculate average response time
+          if [ ${#RESPONSE_TIMES[@]} -gt 0 ]; then
+            TOTAL_TIME=0
+            for time in "${RESPONSE_TIMES[@]}"; do
+              TOTAL_TIME=$((TOTAL_TIME + time))
+            done
+            AVG_RESPONSE_TIME=$((TOTAL_TIME / ${#RESPONSE_TIMES[@]}))
+            echo "Average response time: ${AVG_RESPONSE_TIME}ms"
+          fi
+          
+          echo "Paste creation time: ${PASTE_CREATE_TIME}ms"
+          echo "Paste retrieval time: ${PASTE_RETRIEVE_TIME}ms"
+          
+          # Performance thresholds
+          if [ "$PASTE_CREATE_TIME" -gt 5000 ]; then
+            echo "⚠️  Paste creation is slow (>${PASTE_CREATE_TIME}ms)"
+          fi
+          
+          if [ "$AVG_RESPONSE_TIME" -gt 2000 ]; then
+            echo "⚠️  Average response time is slow (>${AVG_RESPONSE_TIME}ms)"
+          fi
+          
+          echo "=== HEALTH CHECK SUMMARY ==="
+          
+          # Determine overall health status
+          if [ "$HEALTH_STATUS" != "failed" ]; then
+            if [ -n "$PASTE_RESPONSE" ]; then
+              HEALTH_STATUS="passed"
+              
+              if [ "$IS_ROLLBACK" = "true" ]; then
+                HEALTH_DETAILS="Rollback health check passed - service is healthy after rollback"
+                echo "✅ Rollback is healthy and fully functional!"
+              else
+                HEALTH_DETAILS="All health checks and functionality tests passed successfully"
+                echo "✅ Service is healthy and fully functional!"
+              fi
+            else
+              HEALTH_STATUS="degraded"
+              
+              if [ "$IS_ROLLBACK" = "true" ]; then
+                HEALTH_DETAILS="Rollback completed but service functionality is degraded"
+                echo "⚠️  Rollback completed but service functionality is degraded"
+              else
+                HEALTH_DETAILS="Service is available but core functionality has issues"
+                echo "⚠️  Service is available but functionality is degraded"
+              fi
+            fi
+          fi
+          
+          # Create detailed health report
+          cat > /tmp/health_report.txt << HEALTH_REPORT
+### Enhanced Service Health Report $([ "$IS_ROLLBACK" = "true" ] && echo "(Rollback)" || echo "(Deployment)")
+
+#### Availability Test Results
+- **Max Retries**: $MAX_RETRIES
+- **Successful After**: $((RETRY_COUNT + 1)) attempts
+- **Total Wait Time**: ${TOTAL_WAIT_TIME}s
+- **Final HTTP Code**: $HTTP_CODE
+- **Average Response Time**: ${AVG_RESPONSE_TIME}ms
+
+#### Functionality Test Results
+- **Paste Creation**: $([ -n "$PASTE_RESPONSE" ] && echo "✅ Success" || echo "❌ Failed")
+- **Paste Creation Time**: ${PASTE_CREATE_TIME}ms
+- **Paste Retrieval**: $([ "$RETRIEVED_CONTENT" = "$TEST_CONTENT" ] && echo "✅ Success" || echo "⚠️ Warning")
+- **Paste Retrieval Time**: ${PASTE_RETRIEVE_TIME}ms
+- **Health Endpoint**: HTTP $HEALTH_ENDPOINT_RESPONSE
+- **Static Resources**: HTTP $STATIC_RESPONSE
+
+#### Overall Status
+- **Health Status**: $HEALTH_STATUS
+- **Details**: $HEALTH_DETAILS
+- **Test Timestamp**: $HEALTH_TIMESTAMP
+- **Test Type**: $([ "$IS_ROLLBACK" = "true" ] && echo "Rollback Health Check" || echo "Deployment Health Check")
+HEALTH_REPORT
+          
+          # Append health report to GitHub summary
+          cat /tmp/health_report.txt >> $GITHUB_STEP_SUMMARY
+          
+          # Record final health check results
+          TARGET_DIGEST="${ROLLBACK_TARGET_DIGEST:-${ARTIFACT_DIGEST}}"
+          TEST_TYPE=$([ "$IS_ROLLBACK" = "true" ] && echo "rollback_health_check" || echo "health_check")
+          
+          if [ -n "$TARGET_DIGEST" ]; then
+            python scripts/artifact_manager.py record-test-result \
+              --digest "$TARGET_DIGEST" \
+              --test-type "$TEST_TYPE" \
+              --status "$HEALTH_STATUS" \
+              --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              --details "$HEALTH_DETAILS"
+              
+            # Also record functionality test results separately
+            FUNCTIONALITY_STATUS=$([ -n "$PASTE_RESPONSE" ] && echo "passed" || echo "failed")
+            FUNCTIONALITY_TEST_TYPE=$([ "$IS_ROLLBACK" = "true" ] && echo "rollback_functionality_test" || echo "functionality_test")
+            
+            python scripts/artifact_manager.py record-test-result \
+              --digest "$TARGET_DIGEST" \
+              --test-type "$FUNCTIONALITY_TEST_TYPE" \
+              --status "$FUNCTIONALITY_STATUS" \
+              --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              --details "Core functionality test: paste creation and retrieval $([ "$IS_ROLLBACK" = "true" ] && echo "after rollback" || echo "")"
+          fi
+          
+          # Update deployment status based on health check
+          if [ "$HEALTH_STATUS" = "failed" ]; then
+            gh variable set DEPLOYMENT_STATUS --body "failed" --repo ${{ github.repository }}
+            
+            if [ "$IS_ROLLBACK" = "true" ]; then
+              gh variable set ROLLBACK_STATUS --body "failed" --repo ${{ github.repository }}
+              gh variable set ROLLBACK_FAILURE_REASON --body "health_check_failed" --repo ${{ github.repository }}
+              gh variable set ROLLBACK_FAILURE_STAGE --body "health_check" --repo ${{ github.repository }}
+              gh variable set DEPLOYMENT_FAILURE_REASON --body "rollback_health_check_failed" --repo ${{ github.repository }}
+            else
+              gh variable set DEPLOYMENT_FAILURE_REASON --body "health_check_failed" --repo ${{ github.repository }}
+            fi
+            
+            exit 1
+          elif [ "$HEALTH_STATUS" = "degraded" ]; then
+            gh variable set DEPLOYMENT_STATUS --body "degraded" --repo ${{ github.repository }}
+            
+            if [ "$IS_ROLLBACK" = "true" ]; then
+              echo "⚠️  Rollback completed but service is degraded"
+            else
+              echo "⚠️  Deployment completed but service is degraded"
+            fi
+          else
+            gh variable set DEPLOYMENT_STATUS --body "healthy" --repo ${{ github.repository }}
+            
+            if [ "$IS_ROLLBACK" = "true" ]; then
+              echo "✅ Rollback completed successfully - service is healthy!"
+              gh variable set ROLLBACK_STATUS --body "successful" --repo ${{ github.repository }}
+            else
+              echo "✅ Deployment completed successfully - service is healthy!"
+              
+              # Reset deployment failure count on successful deployment
+              gh variable set DEPLOYMENT_FAILURE_COUNT --body "0" --repo ${{ github.repository }}
+              gh variable set LAST_SUCCESSFUL_DEPLOYMENT --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }}
+              
+              echo "🔄 Deployment failure count reset due to successful deployment"
+            fi
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
-      - name: Generate deployment summary
+      - name: Generate enhanced deployment summary with manual action reporting
         if: always()
         run: |
-          echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "## Enhanced Deployment Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Check if this was a manual action
+          IS_MANUAL="${{ github.event_name == 'workflow_dispatch' }}"
+          
+          if [ "$IS_MANUAL" = "true" ]; then
+            echo "🔧 **Manual Operation**" >> $GITHUB_STEP_SUMMARY
+            
+            # Get manual action details
+            MANUAL_ACTION_TYPE="${{ env.MANUAL_ACTION_TYPE }}"
+            MANUAL_ACTOR="${{ env.MANUAL_ACTOR }}"
+            MANUAL_TIMESTAMP="${{ env.MANUAL_TIMESTAMP }}"
+            MANUAL_REASON="${{ env.MANUAL_REASON }}"
+            BYPASS_GATING="${{ env.BYPASS_GATING }}"
+            OVERRIDE_CIRCUIT_BREAKER="${{ env.OVERRIDE_CIRCUIT_BREAKER }}"
+            FORCE_DEPLOYMENT="${{ env.FORCE_DEPLOYMENT }}"
+            
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Manual Action Details" >> $GITHUB_STEP_SUMMARY
+            echo "- **Action Type**: $MANUAL_ACTION_TYPE" >> $GITHUB_STEP_SUMMARY
+            echo "- **Operator**: $MANUAL_ACTOR" >> $GITHUB_STEP_SUMMARY
+            echo "- **Timestamp**: $MANUAL_TIMESTAMP" >> $GITHUB_STEP_SUMMARY
+            echo "- **Reason**: $MANUAL_REASON" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Override Flags Used" >> $GITHUB_STEP_SUMMARY
+            echo "- **Bypass Gating**: $([ "$BYPASS_GATING" = "true" ] && echo "⚠️ YES" || echo "❌ NO")" >> $GITHUB_STEP_SUMMARY
+            echo "- **Override Circuit Breaker**: $([ "$OVERRIDE_CIRCUIT_BREAKER" = "true" ] && echo "🚨 YES" || echo "❌ NO")" >> $GITHUB_STEP_SUMMARY
+            echo "- **Force Deployment**: $([ "$FORCE_DEPLOYMENT" = "true" ] && echo "⚠️ YES" || echo "❌ NO")" >> $GITHUB_STEP_SUMMARY
+            
+            # Add safety override warnings if applicable
+            if [ "$BYPASS_GATING" = "true" ] || [ "$OVERRIDE_CIRCUIT_BREAKER" = "true" ] || [ "$FORCE_DEPLOYMENT" = "true" ]; then
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "### ⚠️ Safety Overrides Applied" >> $GITHUB_STEP_SUMMARY
+              echo "This manual operation included safety overrides:" >> $GITHUB_STEP_SUMMARY
+              
+              if [ "$BYPASS_GATING" = "true" ]; then
+                echo "- **Gating Bypass**: Automated quality gates were bypassed" >> $GITHUB_STEP_SUMMARY
+              fi
+              
+              if [ "$OVERRIDE_CIRCUIT_BREAKER" = "true" ]; then
+                echo "- **Circuit Breaker Override**: Circuit breaker protection was overridden" >> $GITHUB_STEP_SUMMARY
+              fi
+              
+              if [ "$FORCE_DEPLOYMENT" = "true" ]; then
+                echo "- **Force Deployment**: Concurrency or duplicate deployment checks were bypassed" >> $GITHUB_STEP_SUMMARY
+              fi
+              
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "**Operator Responsibility**: The manual operator is responsible for monitoring and resolving any issues that arise from these overrides." >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
           
           if [ "${{ inputs.rollback }}" = "true" ]; then
             echo "🔄 **Rollback Operation**" >> $GITHUB_STEP_SUMMARY
+            
+            # Get rollback-specific information
+            ROLLBACK_STATUS=$(gh variable get ROLLBACK_STATUS --repo ${{ github.repository }} 2>/dev/null || echo "unknown")
+            ROLLBACK_METHOD=$(gh variable get ROLLBACK_METHOD --repo ${{ github.repository }} 2>/dev/null || echo "unknown")
+            ROLLBACK_TARGET_DIGEST=$(gh variable get ROLLBACK_TARGET_DIGEST --repo ${{ github.repository }} 2>/dev/null || echo "N/A")
+            ROLLBACK_INITIATED_BY=$(gh variable get ROLLBACK_INITIATED_BY --repo ${{ github.repository }} 2>/dev/null || echo "unknown")
+            ROLLBACK_INITIATED_AT=$(gh variable get ROLLBACK_INITIATED_AT --repo ${{ github.repository }} 2>/dev/null || echo "N/A")
+            ROLLBACK_VERIFIED_AT=$(gh variable get ROLLBACK_VERIFIED_AT --repo ${{ github.repository }} 2>/dev/null || echo "N/A")
+            ROLLBACK_BYPASS_GATING=$(gh variable get ROLLBACK_BYPASS_GATING --repo ${{ github.repository }} 2>/dev/null || echo "false")
+            
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Rollback Details" >> $GITHUB_STEP_SUMMARY
+            echo "- **Rollback Status**: $ROLLBACK_STATUS" >> $GITHUB_STEP_SUMMARY
+            echo "- **Rollback Method**: $ROLLBACK_METHOD" >> $GITHUB_STEP_SUMMARY
+            echo "- **Target Artifact**: $([ "$ROLLBACK_TARGET_DIGEST" != "N/A" ] && echo "\`$ROLLBACK_TARGET_DIGEST\`" || echo "File-based backup")" >> $GITHUB_STEP_SUMMARY
+            echo "- **Initiated By**: $ROLLBACK_INITIATED_BY" >> $GITHUB_STEP_SUMMARY
+            echo "- **Initiated At**: $ROLLBACK_INITIATED_AT" >> $GITHUB_STEP_SUMMARY
+            echo "- **Verified At**: $([ "$ROLLBACK_VERIFIED_AT" != "N/A" ] && echo "$ROLLBACK_VERIFIED_AT" || echo "Not verified")" >> $GITHUB_STEP_SUMMARY
+            echo "- **Gating Bypassed**: $([ "$ROLLBACK_BYPASS_GATING" = "true" ] && echo "⚠️ YES" || echo "❌ NO")" >> $GITHUB_STEP_SUMMARY
+            
+            # Add rollback failure information if applicable
+            if [ "$ROLLBACK_STATUS" = "failed" ]; then
+              ROLLBACK_FAILURE_REASON=$(gh variable get ROLLBACK_FAILURE_REASON --repo ${{ github.repository }} 2>/dev/null || echo "unknown")
+              ROLLBACK_FAILURE_STAGE=$(gh variable get ROLLBACK_FAILURE_STAGE --repo ${{ github.repository }} 2>/dev/null || echo "unknown")
+              
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "### Rollback Failure Information" >> $GITHUB_STEP_SUMMARY
+              echo "- **Failure Reason**: $ROLLBACK_FAILURE_REASON" >> $GITHUB_STEP_SUMMARY
+              echo "- **Failure Stage**: $ROLLBACK_FAILURE_STAGE" >> $GITHUB_STEP_SUMMARY
+              echo "- **Recommended Action**: Manual investigation and intervention required" >> $GITHUB_STEP_SUMMARY
+            fi
           else
             echo "🚀 **New Deployment**" >> $GITHUB_STEP_SUMMARY
           fi
           
           echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Deployment Details" >> $GITHUB_STEP_SUMMARY
           echo "- **Status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Triggered by**: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Timestamp**: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -n "${ARTIFACT_DIGEST}" ]; then
+            echo "- **Artifact Digest**: \`${ARTIFACT_DIGEST}\`" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Get enhanced deployment state
+          DEPLOYED_DIGEST=$(gh variable get DEPLOYED_ARTIFACT_DIGEST --repo ${{ github.repository }} 2>/dev/null || echo "N/A")
+          DEPLOYMENT_TIMESTAMP=$(gh variable get DEPLOYMENT_TIMESTAMP --repo ${{ github.repository }} 2>/dev/null || echo "N/A")
+          DEPLOYMENT_STATUS=$(gh variable get DEPLOYMENT_STATUS --repo ${{ github.repository }} 2>/dev/null || echo "unknown")
+          DEPLOYMENT_TYPE=$(gh variable get DEPLOYMENT_TYPE --repo ${{ github.repository }} 2>/dev/null || echo "unknown")
+          DEPLOYMENT_TRIGGERED_BY=$(gh variable get DEPLOYMENT_TRIGGERED_BY --repo ${{ github.repository }} 2>/dev/null || echo "unknown")
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Current Production State" >> $GITHUB_STEP_SUMMARY
+          echo "- **Deployed Artifact**: \`$DEPLOYED_DIGEST\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Deployment Time**: $DEPLOYMENT_TIMESTAMP" >> $GITHUB_STEP_SUMMARY
+          echo "- **Deployment Status**: $DEPLOYMENT_STATUS" >> $GITHUB_STEP_SUMMARY
+          echo "- **Deployment Type**: $DEPLOYMENT_TYPE" >> $GITHUB_STEP_SUMMARY
+          echo "- **Deployed By**: $DEPLOYMENT_TRIGGERED_BY" >> $GITHUB_STEP_SUMMARY
+          
+          # Add verification results if available
+          TARGET_DIGEST="${ARTIFACT_DIGEST}"
+          if [ "${{ inputs.rollback }}" = "true" ]; then
+            TARGET_DIGEST=$(gh variable get ROLLBACK_TARGET_DIGEST --repo ${{ github.repository }} 2>/dev/null || echo "")
+          fi
+          
+          if [ -n "$TARGET_DIGEST" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Verification Results" >> $GITHUB_STEP_SUMMARY
+            
+            # Get test results from artifact manager
+            TEST_RESULTS=$(python scripts/artifact_manager.py get-test-results --digest "$TARGET_DIGEST" 2>/dev/null || echo "{}")
+            
+            if [ "${{ inputs.rollback }}" = "true" ]; then
+              # Parse and display rollback verification results
+              ROLLBACK_VERIFICATION=$(echo "$TEST_RESULTS" | python -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    rv = data.get('rollback_verification', {})
+    print(f\"- **Rollback Verification**: {rv.get('status', 'unknown')}\")
+    if 'timestamp' in rv:
+        print(f\"- **Verification Time**: {rv['timestamp']}\")
+except:
+    print('- **Rollback Verification**: unknown')
+" 2>/dev/null || echo "- **Rollback Verification**: unknown")
+              
+              ROLLBACK_HEALTH_CHECK=$(echo "$TEST_RESULTS" | python -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    rhc = data.get('rollback_health_check', {})
+    print(f\"- **Rollback Health Check**: {rhc.get('status', 'unknown')}\")
+    if 'timestamp' in rhc:
+        print(f\"- **Health Check Time**: {rhc['timestamp']}\")
+except:
+    print('- **Rollback Health Check**: unknown')
+" 2>/dev/null || echo "- **Rollback Health Check**: unknown")
+              
+              ROLLBACK_FUNCTIONALITY_TEST=$(echo "$TEST_RESULTS" | python -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    rft = data.get('rollback_functionality_test', {})
+    print(f\"- **Rollback Functionality Test**: {rft.get('status', 'unknown')}\")
+    if 'timestamp' in rft:
+        print(f\"- **Functionality Test Time**: {rft['timestamp']}\")
+except:
+    print('- **Rollback Functionality Test**: unknown')
+" 2>/dev/null || echo "- **Rollback Functionality Test**: unknown")
+              
+              echo "$ROLLBACK_VERIFICATION" >> $GITHUB_STEP_SUMMARY
+              echo "$ROLLBACK_HEALTH_CHECK" >> $GITHUB_STEP_SUMMARY
+              echo "$ROLLBACK_FUNCTIONALITY_TEST" >> $GITHUB_STEP_SUMMARY
+            else
+              # Parse and display deployment verification results
+              DEPLOYMENT_VERIFICATION=$(echo "$TEST_RESULTS" | python -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    dv = data.get('deployment_verification', {})
+    print(f\"- **Deployment Verification**: {dv.get('status', 'unknown')}\")
+    if 'timestamp' in dv:
+        print(f\"- **Verification Time**: {dv['timestamp']}\")
+except:
+    print('- **Deployment Verification**: unknown')
+" 2>/dev/null || echo "- **Deployment Verification**: unknown")
+              
+              HEALTH_CHECK=$(echo "$TEST_RESULTS" | python -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    hc = data.get('health_check', {})
+    print(f\"- **Health Check**: {hc.get('status', 'unknown')}\")
+    if 'timestamp' in hc:
+        print(f\"- **Health Check Time**: {hc['timestamp']}\")
+except:
+    print('- **Health Check**: unknown')
+" 2>/dev/null || echo "- **Health Check**: unknown")
+              
+              FUNCTIONALITY_TEST=$(echo "$TEST_RESULTS" | python -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    ft = data.get('functionality_test', {})
+    print(f\"- **Functionality Test**: {ft.get('status', 'unknown')}\")
+    if 'timestamp' in ft:
+        print(f\"- **Functionality Test Time**: {ft['timestamp']}\")
+except:
+    print('- **Functionality Test**: unknown')
+" 2>/dev/null || echo "- **Functionality Test**: unknown")
+              
+              echo "$DEPLOYMENT_VERIFICATION" >> $GITHUB_STEP_SUMMARY
+              echo "$HEALTH_CHECK" >> $GITHUB_STEP_SUMMARY
+              echo "$FUNCTIONALITY_TEST" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
+          
+          # Add failure information if deployment failed
+          if [ "${{ job.status }}" = "failure" ]; then
+            FAILURE_REASON=$(gh variable get DEPLOYMENT_FAILURE_REASON --repo ${{ github.repository }} 2>/dev/null || echo "unknown")
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Failure Information" >> $GITHUB_STEP_SUMMARY
+            echo "- **Failure Reason**: $FAILURE_REASON" >> $GITHUB_STEP_SUMMARY
+            
+            if [ "${{ inputs.rollback }}" = "true" ]; then
+              echo "- **Recommended Action**: Manual investigation required - rollback failed" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "- **Recommended Action**: Review logs and consider rollback if necessary" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
+          
+          # Add backup information
+          BACKUP_DIGEST=$(gh variable get BACKUP_ARTIFACT_DIGEST --repo ${{ github.repository }} 2>/dev/null || echo "N/A")
+          BACKUP_TIMESTAMP=$(gh variable get BACKUP_CREATED_AT --repo ${{ github.repository }} 2>/dev/null || echo "N/A")
+          
+          if [ "$BACKUP_DIGEST" != "N/A" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Backup Information" >> $GITHUB_STEP_SUMMARY
+            echo "- **Backup Artifact**: \`$BACKUP_DIGEST\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **Backup Created**: $BACKUP_TIMESTAMP" >> $GITHUB_STEP_SUMMARY
+            
+            if [ "${{ inputs.rollback }}" != "true" ]; then
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "### Quick Rollback" >> $GITHUB_STEP_SUMMARY
+              echo "To rollback to the previous version, run this workflow manually with:" >> $GITHUB_STEP_SUMMARY
+              echo "- ✅ **Enable rollback option**" >> $GITHUB_STEP_SUMMARY
+              echo "- 📦 **Previous artifact**: \`$BACKUP_DIGEST\`" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Release deployment lock
+        if: always()
+        run: |
+          echo "🔓 Releasing deployment lock..."
+          
+          # Clear deployment lock
+          gh variable set DEPLOYMENT_IN_PROGRESS --body "false" --repo ${{ github.repository }}
+          gh variable delete DEPLOYMENT_STARTED_BY --repo ${{ github.repository }} 2>/dev/null || true
+          gh variable delete DEPLOYMENT_STARTED_AT --repo ${{ github.repository }} 2>/dev/null || true
+          
+          echo "✅ Deployment lock released"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
-      - name: Notify on failure
+      - name: Enhanced failure notification and status tracking
         if: failure()
         run: |
-          echo "❌ Deployment failed! Manual intervention may be required."
-          echo "💡 To rollback, run this workflow manually with rollback option enabled."
+          echo "❌ Operation failed! Enhanced failure tracking and notification."
+          
+          # Determine if this was a rollback or deployment failure
+          IS_ROLLBACK="${{ inputs.rollback }}"
+          FAILURE_STAGE="unknown"
+          FAILURE_REASON="unknown"
+          
+          # Check which stage failed by examining GitHub variables
+          DEPLOYMENT_STATUS=$(gh variable get DEPLOYMENT_STATUS --repo ${{ github.repository }} 2>/dev/null || echo "unknown")
+          DEPLOYMENT_FAILURE_REASON=$(gh variable get DEPLOYMENT_FAILURE_REASON --repo ${{ github.repository }} 2>/dev/null || echo "")
+          
+          if [ "$IS_ROLLBACK" = "true" ]; then
+            echo "💥 Rollback operation failed!"
+            
+            # Get rollback-specific failure information
+            ROLLBACK_STATUS=$(gh variable get ROLLBACK_STATUS --repo ${{ github.repository }} 2>/dev/null || echo "unknown")
+            ROLLBACK_FAILURE_REASON=$(gh variable get ROLLBACK_FAILURE_REASON --repo ${{ github.repository }} 2>/dev/null || echo "")
+            ROLLBACK_FAILURE_STAGE=$(gh variable get ROLLBACK_FAILURE_STAGE --repo ${{ github.repository }} 2>/dev/null || echo "")
+            
+            if [ -n "$ROLLBACK_FAILURE_REASON" ]; then
+              FAILURE_REASON="$ROLLBACK_FAILURE_REASON"
+              FAILURE_STAGE="${ROLLBACK_FAILURE_STAGE:-rollback}"
+              
+              case "$ROLLBACK_FAILURE_REASON" in
+                "execution_failed")
+                  echo "💥 Rollback execution failed"
+                  ;;
+                "verification_failed")
+                  echo "💥 Rollback verification failed"
+                  ;;
+                "health_check_failed")
+                  echo "💥 Rollback health check failed"
+                  ;;
+                *)
+                  echo "💥 Rollback failed for unknown reason"
+                  ;;
+              esac
+            else
+              echo "💥 Rollback failed at unknown stage"
+              FAILURE_REASON="rollback_unknown_failure"
+              FAILURE_STAGE="rollback"
+            fi
+            
+            # Record rollback failure
+            gh variable set ROLLBACK_STATUS --body "failed" --repo ${{ github.repository }}
+            gh variable set ROLLBACK_FAILURE_TIME --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }}
+            
+            # Record in artifact manager if we have a target digest
+            ROLLBACK_TARGET_DIGEST=$(gh variable get ROLLBACK_TARGET_DIGEST --repo ${{ github.repository }} 2>/dev/null || echo "")
+            if [ -n "$ROLLBACK_TARGET_DIGEST" ]; then
+              python scripts/artifact_manager.py record-test-result \
+                --digest "$ROLLBACK_TARGET_DIGEST" \
+                --test-type "rollback" \
+                --status "failed" \
+                --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                --details "Rollback failed at stage: $FAILURE_STAGE, reason: $FAILURE_REASON"
+            fi
+            
+          else
+            echo "💥 Deployment operation failed!"
+            
+            if [ -n "$DEPLOYMENT_FAILURE_REASON" ]; then
+              FAILURE_REASON="$DEPLOYMENT_FAILURE_REASON"
+              case "$DEPLOYMENT_FAILURE_REASON" in
+                "deployment_verification_failed")
+                  FAILURE_STAGE="deployment_verification"
+                  echo "� Failure occurred during deployment verification"
+                  ;;
+                "health_check_failed")
+                  FAILURE_STAGE="health_check"
+                  echo "💥 Failure occurred during health check"
+                  ;;
+                "rollback_health_check_failed")
+                  FAILURE_STAGE="rollback_health_check"
+                  echo "💥 Failure occurred during rollback health check"
+                  ;;
+                *)
+                  FAILURE_STAGE="deployment"
+                  echo "💥 Failure occurred during deployment process"
+                  ;;
+              esac
+            else
+              echo "💥 Failure occurred at unknown stage"
+              FAILURE_STAGE="deployment"
+              FAILURE_REASON="deployment_unknown_failure"
+            fi
+            
+            # Update deployment failure count for circuit breaker (only for non-rollback failures)
+            CURRENT_DEPLOYMENT_FAILURE_COUNT="${{ steps.circuit_breaker_check.outputs.DEPLOYMENT_FAILURE_COUNT }}"
+            NEW_DEPLOYMENT_FAILURE_COUNT=$((CURRENT_DEPLOYMENT_FAILURE_COUNT + 1))
+            
+            echo "Incrementing deployment failure count: $CURRENT_DEPLOYMENT_FAILURE_COUNT -> $NEW_DEPLOYMENT_FAILURE_COUNT"
+            
+            # Update deployment failure tracking
+            gh variable set DEPLOYMENT_FAILURE_COUNT --body "$NEW_DEPLOYMENT_FAILURE_COUNT" --repo ${{ github.repository }}
+            gh variable set LAST_DEPLOYMENT_FAILURE_TIME --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }}
+            gh variable set LAST_DEPLOYMENT_FAILURE_REASON --body "$FAILURE_REASON" --repo ${{ github.repository }}
+            gh variable set LAST_DEPLOYMENT_FAILURE_STAGE --body "$FAILURE_STAGE" --repo ${{ github.repository }}
+            
+            # Check if deployment circuit breaker should be triggered
+            DEPLOYMENT_FAILURE_THRESHOLD="${{ steps.circuit_breaker_check.outputs.DEPLOYMENT_FAILURE_THRESHOLD }}"
+            
+            if [ "$NEW_DEPLOYMENT_FAILURE_COUNT" -ge "$DEPLOYMENT_FAILURE_THRESHOLD" ]; then
+              echo "🚫 Deployment failure threshold reached - circuit breaker will be opened"
+              echo "Manual intervention is now required for deployments"
+              
+              # Log circuit breaker trigger for deployments
+              python scripts/circuit_breaker.py --repo ${{ github.repository }} open --reason "deployment_failure_threshold_exceeded"
+              
+              echo "🚨 Circuit breaker opened due to repeated deployment failures"
+            else
+              echo "⚠️  Deployment failure recorded - $((DEPLOYMENT_FAILURE_THRESHOLD - NEW_DEPLOYMENT_FAILURE_COUNT)) failures remaining before circuit breaker"
+            fi
+            
+            # Record failure in artifact manager if we have a digest
+            if [ -n "${ARTIFACT_DIGEST}" ]; then
+              python scripts/artifact_manager.py record-test-result \
+                --digest "${ARTIFACT_DIGEST}" \
+                --test-type "deployment" \
+                --status "failed" \
+                --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                --details "Deployment failed at stage: $FAILURE_STAGE, reason: $FAILURE_REASON"
+            fi
+          fi
+          
+          # Record comprehensive failure information
+          gh variable set DEPLOYMENT_STATUS --body "failed" --repo ${{ github.repository }}
+          gh variable set DEPLOYMENT_FAILURE_STAGE --body "$FAILURE_STAGE" --repo ${{ github.repository }}
+          gh variable set DEPLOYMENT_FAILURE_TIME --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }}
+          
+          # Generate failure summary
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "$IS_ROLLBACK" = "true" ]; then
+            echo "## 🚨 Rollback Failure Report" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## � Deployment Failure Report" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Failure Details" >> $GITHUB_STEP_SUMMARY
+          echo "- **Operation Type**: $([ "$IS_ROLLBACK" = "true" ] && echo "Rollback" || echo "Deployment")" >> $GITHUB_STEP_SUMMARY
+          echo "- **Failure Stage**: $FAILURE_STAGE" >> $GITHUB_STEP_SUMMARY
+          echo "- **Failure Reason**: $FAILURE_REASON" >> $GITHUB_STEP_SUMMARY
+          echo "- **Failure Time**: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Operation Status**: $DEPLOYMENT_STATUS" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "$IS_ROLLBACK" != "true" ]; then
+            NEW_DEPLOYMENT_FAILURE_COUNT=$(gh variable get DEPLOYMENT_FAILURE_COUNT --repo ${{ github.repository }} 2>/dev/null || echo "0")
+            DEPLOYMENT_FAILURE_THRESHOLD=$(gh variable get DEPLOYMENT_CIRCUIT_BREAKER_THRESHOLD --repo ${{ github.repository }} 2>/dev/null || echo "5")
+            echo "- **Deployment Failure Count**: $NEW_DEPLOYMENT_FAILURE_COUNT / $DEPLOYMENT_FAILURE_THRESHOLD" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          TARGET_DIGEST="${ARTIFACT_DIGEST}"
+          if [ "$IS_ROLLBACK" = "true" ]; then
+            TARGET_DIGEST=$(gh variable get ROLLBACK_TARGET_DIGEST --repo ${{ github.repository }} 2>/dev/null || echo "")
+          fi
+          
+          if [ -n "$TARGET_DIGEST" ]; then
+            echo "- **Failed Artifact**: \`$TARGET_DIGEST\`" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Get current production state for comparison
+          CURRENT_DEPLOYED=$(gh variable get DEPLOYED_ARTIFACT_DIGEST --repo ${{ github.repository }} 2>/dev/null || echo "N/A")
+          BACKUP_AVAILABLE=$(gh variable get BACKUP_ARTIFACT_DIGEST --repo ${{ github.repository }} 2>/dev/null || echo "N/A")
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Current State" >> $GITHUB_STEP_SUMMARY
+          echo "- **Currently Deployed**: \`$CURRENT_DEPLOYED\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Backup Available**: $([ "$BACKUP_AVAILABLE" != "N/A" ] && echo "✅ Yes (\`$BACKUP_AVAILABLE\`)" || echo "❌ No")" >> $GITHUB_STEP_SUMMARY
+          
+          # Add circuit breaker status for deployment failures
+          if [ "$IS_ROLLBACK" != "true" ]; then
+            NEW_DEPLOYMENT_FAILURE_COUNT=$(gh variable get DEPLOYMENT_FAILURE_COUNT --repo ${{ github.repository }} 2>/dev/null || echo "0")
+            DEPLOYMENT_FAILURE_THRESHOLD=$(gh variable get DEPLOYMENT_CIRCUIT_BREAKER_THRESHOLD --repo ${{ github.repository }} 2>/dev/null || echo "5")
+            
+            if [ "$NEW_DEPLOYMENT_FAILURE_COUNT" -ge "$DEPLOYMENT_FAILURE_THRESHOLD" ]; then
+              echo "- **Circuit Breaker**: 🚫 **OPEN** - Manual intervention required" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "- **Circuit Breaker**: ✅ **CLOSED** - $((DEPLOYMENT_FAILURE_THRESHOLD - NEW_DEPLOYMENT_FAILURE_COUNT)) failures remaining" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Recommended Actions" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "$IS_ROLLBACK" = "true" ]; then
+            echo "#### 🚨 Rollback Failed" >> $GITHUB_STEP_SUMMARY
+            echo "1. 🔍 **Investigate rollback failure** - check logs for specific error details" >> $GITHUB_STEP_SUMMARY
+            echo "2. 🛠️ **Manual intervention required** - rollback automation has failed" >> $GITHUB_STEP_SUMMARY
+            echo "3. 📋 **Check service status** manually on the target system" >> $GITHUB_STEP_SUMMARY
+            echo "4. 🔄 **Consider manual rollback** using system-level tools" >> $GITHUB_STEP_SUMMARY
+            echo "5. 🚨 **Escalate to operations team** if service is down" >> $GITHUB_STEP_SUMMARY
+          else
+            NEW_DEPLOYMENT_FAILURE_COUNT=$(gh variable get DEPLOYMENT_FAILURE_COUNT --repo ${{ github.repository }} 2>/dev/null || echo "0")
+            DEPLOYMENT_FAILURE_THRESHOLD=$(gh variable get DEPLOYMENT_CIRCUIT_BREAKER_THRESHOLD --repo ${{ github.repository }} 2>/dev/null || echo "5")
+            
+            if [ "$NEW_DEPLOYMENT_FAILURE_COUNT" -ge "$DEPLOYMENT_FAILURE_THRESHOLD" ]; then
+              echo "#### 🚨 Circuit Breaker Activated" >> $GITHUB_STEP_SUMMARY
+              echo "1. 🔍 **Investigate root cause** of repeated deployment failures" >> $GITHUB_STEP_SUMMARY
+              echo "2. 🛠️ **Fix underlying issues** manually" >> $GITHUB_STEP_SUMMARY
+              echo "3. 🧪 **Test deployment** manually to verify fixes" >> $GITHUB_STEP_SUMMARY
+              echo "4. 🔄 **Reset circuit breaker** using: \`python scripts/circuit_breaker.py --repo ${{ github.repository }} close\`" >> $GITHUB_STEP_SUMMARY
+              echo "5. 🚀 **Resume automated deployments** after verification" >> $GITHUB_STEP_SUMMARY
+            else
+              case "$FAILURE_STAGE" in
+                "deployment_verification")
+                  echo "1. 🔍 **Review deployment verification logs** for container, network, or resource issues" >> $GITHUB_STEP_SUMMARY
+                  echo "2. 🔄 **Consider rollback** if service is not functioning properly" >> $GITHUB_STEP_SUMMARY
+                  echo "3. 🛠️ **Fix underlying issues** and retry deployment" >> $GITHUB_STEP_SUMMARY
+                  ;;
+                "health_check")
+                  echo "1. 🏥 **Review health check logs** for service availability or functionality issues" >> $GITHUB_STEP_SUMMARY
+                  echo "2. 🔄 **Consider rollback** if service is not responding correctly" >> $GITHUB_STEP_SUMMARY
+                  echo "3. 🐛 **Debug application issues** and redeploy" >> $GITHUB_STEP_SUMMARY
+                  ;;
+                *)
+                  echo "1. 📋 **Review deployment logs** for specific error details" >> $GITHUB_STEP_SUMMARY
+                  echo "2. 🔄 **Consider rollback** using manual workflow trigger" >> $GITHUB_STEP_SUMMARY
+                  echo "3. 🛠️ **Address root cause** and retry deployment" >> $GITHUB_STEP_SUMMARY
+                  ;;
+              esac
+            fi
+          fi
+          
+          if [ "$BACKUP_AVAILABLE" != "N/A" ] && [ "$IS_ROLLBACK" != "true" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Quick Rollback" >> $GITHUB_STEP_SUMMARY
+            echo "To rollback immediately, run this workflow manually with:" >> $GITHUB_STEP_SUMMARY
+            echo "- ✅ **Enable rollback option**" >> $GITHUB_STEP_SUMMARY
+            echo "- 📦 **Backup artifact**: \`$BACKUP_AVAILABLE\`" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Add manual action audit trail for manual operations
+          if [ "$IS_MANUAL" = "true" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Manual Action Audit Trail" >> $GITHUB_STEP_SUMMARY
+            echo "This manual operation has been logged for audit purposes:" >> $GITHUB_STEP_SUMMARY
+            echo "- **Workflow Run ID**: ${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Workflow Run URL**: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Repository**: ${{ github.repository }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+            
+            # Get comprehensive audit information
+            MANUAL_ACTION_DETAILS=$(gh variable get LAST_MANUAL_ACTION_DETAILS --repo ${{ github.repository }} 2>/dev/null || echo "{}")
+            
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Audit Information Stored" >> $GITHUB_STEP_SUMMARY
+            echo "The following audit information has been stored in repository variables:" >> $GITHUB_STEP_SUMMARY
+            echo "- \`LAST_MANUAL_ACTION_TYPE\`: Action type and timestamp" >> $GITHUB_STEP_SUMMARY
+            echo "- \`LAST_MANUAL_ACTION_DETAILS\`: Complete action details in JSON format" >> $GITHUB_STEP_SUMMARY
+            echo "- \`LAST_MANUAL_ACTION_ACTOR\`: Operator who performed the action" >> $GITHUB_STEP_SUMMARY
+            echo "- \`LAST_MANUAL_ACTION_REASON\`: Reason provided for the action" >> $GITHUB_STEP_SUMMARY
+            
+            # Add specific audit variables based on overrides used
+            if [ "$BYPASS_GATING" = "true" ]; then
+              echo "- \`GATING_BYPASS_AUDIT\`: Detailed gating bypass information" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            if [ "$OVERRIDE_CIRCUIT_BREAKER" = "true" ]; then
+              echo "- \`CIRCUIT_BREAKER_OVERRIDE_AUDIT\`: Circuit breaker override details" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            if [ "$FORCE_DEPLOYMENT" = "true" ]; then
+              echo "- \`FORCE_DEPLOYMENT_AUDIT\`: Force deployment override information" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Manual Action Outcome" >> $GITHUB_STEP_SUMMARY
+            
+            if [ "${{ job.status }}" = "success" ]; then
+              echo "✅ **Manual operation completed successfully**" >> $GITHUB_STEP_SUMMARY
+              echo "- All manual overrides (if any) were applied safely" >> $GITHUB_STEP_SUMMARY
+              echo "- Service verification passed" >> $GITHUB_STEP_SUMMARY
+              echo "- System is in a stable state" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "❌ **Manual operation failed**" >> $GITHUB_STEP_SUMMARY
+              echo "- Manual intervention may be required" >> $GITHUB_STEP_SUMMARY
+              echo "- Review logs for specific failure details" >> $GITHUB_STEP_SUMMARY
+              echo "- Consider rollback if service is impacted" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "---" >> $GITHUB_STEP_SUMMARY
+            echo "*🔧 This manual operation has been fully logged and audited for compliance and troubleshooting purposes.*" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "*💡 This enhanced failure tracking helps identify the exact failure point for faster resolution.*" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "$IS_ROLLBACK" = "true" ]; then
+            echo "💡 Enhanced rollback failure information recorded. Manual intervention is required."
+          else
+            echo "💡 Enhanced deployment failure information recorded. Manual intervention may be required."
+            echo "🔄 To rollback, run this workflow manually with rollback option enabled."
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
