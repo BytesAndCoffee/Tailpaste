@@ -19,7 +19,7 @@ echo "🔍 Retrieving artifact digest from CI workflow..." >&2
 gh run download "$CI_RUN_ID" --name coverage-reports --dir /tmp/ci-artifacts || true
 
 # Get artifact digest from artifact manager
-DIGEST=$(python3 scripts/artifact_manager.py get-digest --commit "$COMMIT_SHA" 2>/dev/null || echo "")
+DIGEST=$(python3 scripts/ci/artifact_manager.py get-digest --commit "$COMMIT_SHA" 2>/dev/null || echo "")
 
 if [ -z "$DIGEST" ]; then
   echo "❌ No artifact digest found for commit $COMMIT_SHA" >&2
@@ -31,7 +31,7 @@ echo "✅ Found artifact digest: $DIGEST" >&2
 echo "DIGEST=$DIGEST"
 
 # Validate the digest format
-python3 scripts/artifact_manager.py validate-digest \
+python3 scripts/ci/artifact_manager.py validate-digest \
   --digest "$DIGEST" \
   --registry "$REGISTRY" \
   --repository "$IMAGE_NAME"

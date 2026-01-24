@@ -12,7 +12,7 @@ echo "🏷️ Updating artifact deployment status..." >&2
 
 if [ "$TEST_STATUS" = "passed" ]; then
   # Mark artifact as deployable
-  python3 scripts/artifact_manager.py update-status \
+  python3 scripts/ci/artifact_manager.py update-status \
     --digest "$ARTIFACT_DIGEST" \
     --status "deployable" \
     --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -21,7 +21,7 @@ if [ "$TEST_STATUS" = "passed" ]; then
   echo "deployable=true"
 else
   # Mark artifact as failed
-  python3 scripts/artifact_manager.py update-status \
+  python3 scripts/ci/artifact_manager.py update-status \
     --digest "$ARTIFACT_DIGEST" \
     --status "failed" \
     --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)"

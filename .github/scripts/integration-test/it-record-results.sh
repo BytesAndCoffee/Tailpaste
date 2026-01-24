@@ -23,7 +23,7 @@ fi
 echo "status=$FINAL_STATUS"
 
 # Record test outcome in artifact manager
-python3 scripts/artifact_manager.py record-test-result \
+python3 scripts/ci/artifact_manager.py record-test-result \
   --digest "$ARTIFACT_DIGEST" \
   --test-type "integration" \
   --status "$FINAL_STATUS" \
