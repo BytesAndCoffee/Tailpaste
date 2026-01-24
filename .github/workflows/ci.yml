@@ -224,6 +224,9 @@ jobs:
       - tailpaste-runners
     needs: lint-and-test
     if: github.ref == 'refs/heads/main' && github.event_name == 'push' && needs.lint-and-test.result == 'success'
+    permissions:
+      contents: read
+      packages: write
     outputs:
       image-digest: ${{ steps.build.outputs.digest }}
       image-tag: ${{ steps.meta.outputs.tags }}
