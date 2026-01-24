@@ -233,17 +233,19 @@ jobs:
       - name: Debug - Check artifacts file
         run: |
           echo "Checking for .artifacts.json file..."
+          echo "Current directory: $(pwd)"
           ls -la .artifacts.json || echo "File not found!"
           if [ -f .artifacts.json ]; then
             echo "File contents:"
             cat .artifacts.json
+            echo "Absolute path: $(readlink -f .artifacts.json)"
           fi
       
       - name: Upload artifact metadata
         uses: actions/upload-artifact@v4
         with:
           name: artifact-metadata
-          path: .artifacts.json
+          path: ${{ github.workspace }}/.artifacts.json
           retention-days: 7
         if: always()
       
