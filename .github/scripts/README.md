@@ -15,13 +15,21 @@ This directory contains shell scripts extracted from GitHub Actions workflow fil
 │   ├── cb-export-logs.sh               # Log export
 │   ├── cb-generate-summary.sh          # Summary generation
 │   └── cb-cleanup.sh                   # Cleanup
+├── ci/                                 # CI/CD automation scripts
+│   ├── ci-gating-validation.sh         # CI gating checks
+│   ├── run-code-quality-checks.sh      # Code quality validation
+│   └── run-tests-with-coverage.sh      # Test execution with coverage
 ├── deployment/                         # Deployment automation scripts
 │   ├── deploy-enhanced-verification.sh # Enhanced deployment verification
-│   └── deploy-generate-health-report.sh # Health report generation
+│   ├── deploy-generate-health-report.sh # Health report generation
+│   └── log-manual-action.sh            # Manual deployment/rollback logging
 ├── health-check/                       # Service health monitoring scripts
 │   ├── run-health-check.sh             # Health check execution
 │   ├── generate-health-summary.sh      # Summary generation
-│   └── notify-health-failure.sh        # Failure notification
+│   ├── notify-health-failure.sh        # Failure notification
+│   ├── init-monitoring-session.sh      # Monitoring session initialization
+│   ├── execute-health-checks.sh        # Comprehensive health check execution
+│   └── record-health-results.sh        # Health check result recording
 ├── integration-test/                   # Integration testing scripts
 │   ├── it-get-artifact.sh              # Artifact retrieval
 │   ├── it-update-status.sh             # Status update
@@ -47,6 +55,22 @@ This directory contains shell scripts extracted from GitHub Actions workflow fil
 
 ## Script Categories
 
+### CI Scripts (ci/)
+
+Scripts for continuous integration, including code quality checks, testing, and gating validation.
+
+**Usage in workflow:**
+```yaml
+- name: Run code quality checks
+  run: |
+    .github/scripts/ci/run-code-quality-checks.sh
+```
+
+**Key scripts:**
+- `run-code-quality-checks.sh` - Executes linting and code quality validation
+- `run-tests-with-coverage.sh` - Runs test suite with coverage reporting
+- `ci-gating-validation.sh` - Validates CI gating requirements
+
 ### Health Check Scripts (health-check/)
 
 Scripts for monitoring service health and triggering recovery workflows.
@@ -62,6 +86,9 @@ Scripts for monitoring service health and triggering recovery workflows.
 - `run-health-check.sh` - Executes health check and exports results
 - `generate-health-summary.sh` - Generates GitHub Actions summary
 - `notify-health-failure.sh` - Creates failure notifications
+- `init-monitoring-session.sh` - Initializes monitoring session
+- `execute-health-checks.sh` - Executes comprehensive health checks
+- `record-health-results.sh` - Records health check results
 
 ### Circuit Breaker Scripts (circuit-breaker/)
 
@@ -107,9 +134,52 @@ Scripts for running integration tests, verifying artifacts, and marking deployab
 
 ### Deployment Scripts (deployment/)
 
-Scripts for production deployment verification and health reporting.
+Scripts for production deployment verification, health reporting, and manual action logging.
 
 **Usage in workflow:**
+```yaml
+- name: Generate deployment health report
+  run: |
+    .github/scripts/deployment/deploy-generate-health-report.sh
+```
+
+**Key scripts:**
+- `deploy-enhanced-verification.sh` - Enhanced deployment verification
+- `deploy-generate-health-report.sh` - Health report generation
+- `log-manual-action.sh` - Manual deployment/rollback action logging
+
+### Rollback Scripts (rollback/)
+
+Scripts for managing manual rollback operations with lock management and validation.
+
+**Usage in workflow:**
+```yaml
+- name: Acquire rollback lock
+  run: |
+    .github/scripts/rollback/mr-acquire-lock.sh
+```
+
+**Key scripts:**
+- `mr-log-and-validate.sh` - Validates rollback request and logs initial state
+- `mr-acquire-lock.sh` - Acquires deployment lock for rollback
+- `mr-determine-target.sh` - Determines rollback target artifact
+- `mr-release-lock.sh` - Releases deployment lock
+- `mr-generate-summary.sh` - Generates rollback summary report
+
+### Workflow Orchestration Scripts (workflows/)
+
+Scripts for managing workflow dependencies and orchestration state.
+
+**Usage in workflow:**
+```yaml
+- name: Initialize orchestration
+  run: |
+    .github/scripts/workflows/init-orchestration-session.sh
+```
+
+**Key scripts:**
+- `init-orchestration-session.sh` - Initializes orchestration session
+- `workflow_orchestrator.py` - Python class for workflow dependency validation
 ```yaml
 - name: Run enhanced verification
   run: |
