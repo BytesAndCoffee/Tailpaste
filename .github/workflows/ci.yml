@@ -241,6 +241,13 @@ jobs:
       
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+          cache-dependency-path: 'requirements.txt'
       
       - name: Connect to Tailscale
         uses: tailscale/github-action@v4
@@ -278,10 +285,16 @@ jobs:
             type=sha,prefix={{branch}}-
             type=raw,value=latest,enable={{is_default_branch}}
       
+      - name: Install Python for artifact management
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 python3-pip
+          python3 -m pip install --upgrade pip
+      
       - name: Check for existing artifact
         id: check-artifact
         run: |
-          python scripts/ci/artifact_manager.py check-existing \
+          python3 scripts/ci/artifact_manager.py check-existing \
             --registry ${{ env.REGISTRY }} \
             --repository ${{ env.IMAGE_NAME }} \
             --commit ${{ github.sha }}
@@ -299,20 +312,19 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
       
       - name: Generate artifact digest
         id: digest
         run: |
           if [ "${{ steps.check-artifact.outcome }}" = "success" ]; then
             echo "Using existing artifact digest"
-            DIGEST=$(python scripts/ci/artifact_manager.py get-digest --commit ${{ github.sha }})
+            DIGEST=$(python3 scripts/ci/artifact_manager.py get-digest --commit ${{ github.sha }})
           else
             echo "Using newly built artifact digest"
             DIGEST="${{ steps.build.outputs.digest }}"
           fi
           echo "digest=$DIGEST" >> $GITHUB_OUTPUT
-          python scripts/ci/artifact_manager.py record-artifact \
+          python3 scripts/ci/artifact_manager.py record-artifact \
             --digest "$DIGEST" \
             --commit ${{ github.sha }} \
             --registry ${{ env.REGISTRY }} \
@@ -320,7 +332,7 @@ jobs:
       
       - name: Validate artifact digest
         run: |
-          python scripts/ci/artifact_manager.py validate-digest \
+          python3 scripts/ci/artifact_manager.py validate-digest \
             --digest ${{ steps.digest.outputs.digest }} \
             --registry ${{ env.REGISTRY }} \
             --repository ${{ env.IMAGE_NAME }}
@@ -331,6 +343,6 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **Registry**: ${{ env.REGISTRY }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Repository**: ${{ env.IMAGE_NAME }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Digest**: \`${{ steps.digest.outputs.digest }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Digest**: \`${{ steps.build.outputs.digest }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Tags**: ${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
