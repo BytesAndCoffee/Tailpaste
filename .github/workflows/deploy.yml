@@ -482,6 +482,28 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: 🐛 Debug SSH Access (when enabled)
+        if: true  # Change to 'false' to disable SSH debugging
+        run: |
+          echo "🔌 Setting up Tailscale SSH access for debugging..."
+          echo "Runner will wait for 15 minutes or until you create /tmp/continue file"
+          echo ""
+          echo "To connect: ssh runner@$(hostname)"
+          echo "To continue: touch /tmp/continue"
+          echo ""
+          
+          # Wait for either timeout or continue signal
+          for i in {1..900}; do
+            if [ -f /tmp/continue ]; then
+              echo "✅ Continue signal received, proceeding..."
+              break
+            fi
+            if [ $((i % 60)) -eq 0 ]; then
+              echo "⏳ Waiting... $((i/60)) minute(s) elapsed. Touch /tmp/continue to continue."
+            fi
+            sleep 1
+          done
+
       - name: Validate integration test results and artifact deployability
         if: github.event_name == 'workflow_run' || (github.event_name == 'workflow_dispatch' && inputs.bypass_gating != true)
         run: |
