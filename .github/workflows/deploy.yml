@@ -450,33 +450,6 @@ jobs:
           tags: tag:ci
           ping: docker.tailfa875.ts.net
       
-      - name: Set ssh in Tailscale
-        run: |
-          echo "🔧 Setting up SSH access via Tailscale..."
-          sudo tailscale set --ssh
-
-      - name: 🐛 Debug SSH Access (when enabled)
-        if: true  # Change to 'false' to disable SSH debugging
-        run: |
-          echo "🔌 Tailscale connected! SSH access ready for debugging..."
-          echo "Runner will wait for 15 minutes or until you create /tmp/continue file"
-          echo ""
-          echo "To connect: ssh runner@$(hostname)"
-          echo "To continue: touch /tmp/continue"
-          echo ""
-          
-          # Wait for either timeout or continue signal
-          for i in {1..900}; do
-            if [ -f /tmp/continue ]; then
-              echo "✅ Continue signal received, proceeding..."
-              break
-            fi
-            if [ $((i % 60)) -eq 0 ]; then
-              echo "⏳ Waiting... $((i/60)) minute(s) elapsed. Touch /tmp/continue to continue."
-            fi
-            sleep 1
-          done
-      
       - name: Install GitHub CLI
         run: |
           if ! command -v gh &> /dev/null; then
