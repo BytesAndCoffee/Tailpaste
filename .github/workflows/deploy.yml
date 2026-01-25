@@ -93,6 +93,12 @@ jobs:
     runs-on:
       - tailpaste-runners
     
+    # Required permissions for deployment workflow
+    permissions:
+      contents: read
+      actions: write      # Required to set repository variables
+      packages: read
+    
     # Enhanced concurrency control - prevent concurrent deployments
     concurrency:
       group: production-deployment

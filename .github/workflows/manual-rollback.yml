@@ -51,6 +51,12 @@ jobs:
     runs-on:
       - tailpaste-runners
     
+    # Required permissions for rollback workflow
+    permissions:
+      contents: read
+      actions: write      # Required to set repository variables
+      packages: read
+    
     # Enhanced concurrency control for manual rollbacks
     concurrency:
       group: manual-rollback-${{ github.repository }}
