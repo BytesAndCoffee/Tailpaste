@@ -17,6 +17,10 @@ jobs:
     runs-on:
       - tailpaste-runners
     
+    permissions:
+      contents: read
+      actions: write
+    
     # Only run if triggered by schedule/dispatch OR if CI workflow succeeded
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     
@@ -129,6 +133,25 @@ jobs:
           source .github/scripts/integration-test/it-mark-deployable.sh \
             "${{ steps.test-results.outputs.status }}" \
             "${{ steps.get-artifact.outputs.digest }}" >> $GITHUB_OUTPUT
+
+      - name: Store deployment status in repository variable
+        if: always()
+        run: |
+          COMMIT_SHA="${{ github.event.workflow_run.head_sha || github.sha }}"
+          DIGEST="${{ steps.get-artifact.outputs.digest }}"
+          STATUS="${{ steps.test-results.outputs.status }}"
+          
+          echo "📦 Storing deployment status for commit $COMMIT_SHA"
+          
+          if [ "$STATUS" = "passed" ]; then
+            gh variable set "ARTIFACT_${COMMIT_SHA}_STATUS" --body "deployable" --repo ${{ github.repository }}
+            echo "✅ Artifact marked as deployable"
+          else
+            gh variable set "ARTIFACT_${COMMIT_SHA}_STATUS" --body "failed" --repo ${{ github.repository }}
+            echo "❌ Artifact marked as failed"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
 
       - name: Integration test summary
         if: always()
