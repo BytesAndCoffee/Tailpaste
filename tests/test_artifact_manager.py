@@ -119,8 +119,9 @@ class TestArtifactManager(unittest.TestCase):
         self.assertTrue(result)
         mock_run.assert_called_once()
 
+    @patch("time.sleep")
     @patch("subprocess.run")
-    def test_validate_artifact_exists_failure(self, mock_run):
+    def test_validate_artifact_exists_failure(self, mock_run, mock_sleep):
         """Test failed artifact validation."""
         mock_run.return_value = MagicMock(returncode=1)
 
