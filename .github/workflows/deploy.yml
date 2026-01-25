@@ -639,9 +639,6 @@ jobs:
           
           echo "✅ Using latest deployable artifact: $DIGEST"
           echo "ARTIFACT_DIGEST=$DIGEST" >> $GITHUB_ENV
-      - name: Checkout code
-        uses: actions/checkout@v4
-        if: ${{ !inputs.rollback }}
       
       - name: Set up Docker Compose
         uses: docker/setup-compose-action@v1
