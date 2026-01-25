@@ -86,7 +86,7 @@ jobs:
           export INPUT_FORCE_COORDINATION="${{ inputs.force_coordination }}"
           .github/scripts/workflows/init-orchestration-session.sh
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
       
       - name: Validate workflow dependencies and state
         id: dependency_validation
@@ -129,7 +129,7 @@ jobs:
           echo "CRITICAL_ISSUES=$CRITICAL_ISSUES" >> $GITHUB_OUTPUT
           echo "WARNING_ISSUES=$WARNING_ISSUES" >> $GITHUB_OUTPUT
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
       
       - name: Execute orchestration action
         id: orchestration_action
@@ -242,7 +242,7 @@ jobs:
               ;;
           esac
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
       
       - name: Handle critical issues
         if: steps.dependency_validation.outputs.VALIDATION_STATUS == 'critical'
@@ -271,7 +271,7 @@ jobs:
           
           echo "🚨 Critical issues require immediate attention!"
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
       
       - name: Generate orchestration summary
         if: always()
@@ -338,7 +338,7 @@ jobs:
           
           echo "✅ Orchestration summary generated"
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
       
       - name: Cleanup orchestration session
         if: always()
@@ -360,4 +360,4 @@ jobs:
           
           echo "✅ Orchestration session cleanup completed"
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}

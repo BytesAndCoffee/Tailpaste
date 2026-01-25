@@ -217,7 +217,7 @@ jobs:
             echo "" >> $GITHUB_STEP_SUMMARY
           fi
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
 
       - name: Check circuit breaker status
         id: circuit_breaker_check
@@ -331,7 +331,7 @@ jobs:
             exit 1
           fi
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
 
       - name: Acquire deployment lock with enhanced concurrency control
         if: steps.circuit_breaker_check.outputs.CIRCUIT_BREAKER_OPEN != 'true'
@@ -436,7 +436,7 @@ jobs:
           echo "Lock type: $([ "$IS_MANUAL" = "true" ] && echo "Manual" || echo "Automated")"
           echo "Workflow run: ${{ github.run_id }}"
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
 
       - name: Validate integration test results and artifact deployability
         if: github.event_name == 'workflow_run' || (github.event_name == 'workflow_dispatch' && inputs.bypass_gating != true)
@@ -552,7 +552,7 @@ jobs:
           
           echo "ARTIFACT_DIGEST=$DIGEST" >> $GITHUB_ENV
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
 
       - name: Get latest deployable artifact for manual deployment
         if: github.event_name == 'workflow_dispatch' && inputs.artifact_digest == '' && inputs.rollback != true
@@ -653,7 +653,7 @@ jobs:
             echo "✅ Backup completed: $BACKUP_NAME"
           EOF
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
       
       - name: Enhanced rollback to previous version with gating bypass
         if: ${{ inputs.rollback }}
@@ -876,7 +876,7 @@ jobs:
           
           echo "📊 Rollback state updated - proceeding to verification"
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
       
       - name: Enhanced rollback verification
         if: ${{ inputs.rollback }}
@@ -1029,7 +1029,7 @@ jobs:
             echo "✅ Rollback verification successful - rollback completed successfully"
           fi
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
       
       - name: Deploy tested artifact to docker host
         if: ${{ !inputs.rollback }}
@@ -1137,7 +1137,7 @@ jobs:
             --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --details "Deployed to production by ${{ github.actor }}"
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
       
       - name: Enhanced deployment verification
         run: |
@@ -1197,7 +1197,7 @@ jobs:
             gh variable set DEPLOYMENT_STATUS --body "verified" --repo ${{ github.repository }}
           fi
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
       
       - name: Enhanced service health and functionality testing
         run: |
@@ -1486,7 +1486,7 @@ jobs:
             fi
           fi
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
       
       - name: Generate enhanced deployment summary with manual action reporting
         if: always()
@@ -1679,7 +1679,7 @@ jobs:
             fi
           fi
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
 
       - name: Release deployment lock
         if: always()
@@ -1693,7 +1693,7 @@ jobs:
           
           echo "✅ Deployment lock released"
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
       
       - name: Enhanced failure notification and status tracking
         if: failure()
@@ -1997,5 +1997,5 @@ jobs:
             echo "🔄 To rollback, run this workflow manually with rollback option enabled."
           fi
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
 

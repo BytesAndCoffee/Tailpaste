@@ -153,7 +153,7 @@ jobs:
           echo "  - Deployment Status: $DEPLOYMENT_STATUS"
           echo "  - Triggered By: $TRIGGERED_BY"
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
       
       - name: Check circuit breaker status
         id: circuit_breaker_check
@@ -206,7 +206,7 @@ jobs:
             exit 1
           fi
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
       
       - name: Execute non-destructive recovery actions
         id: recovery_actions
@@ -397,7 +397,7 @@ jobs:
           
           echo "✅ Non-destructive recovery actions completed"
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
       
       - name: Re-run health checks after recovery
         id: post_recovery_health
@@ -449,7 +449,7 @@ jobs:
           gh variable set LAST_HEALTH_CHECK_TIME --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }}
           gh variable set POST_RECOVERY_HEALTH_STATUS --body "$POST_RECOVERY_STATUS" --repo ${{ github.repository }}
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
       
       - name: Evaluate recovery success
         id: recovery_evaluation
@@ -522,7 +522,7 @@ jobs:
             fi
           fi
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
       
       - name: Evaluate redeployment conditions
         id: redeployment_evaluation
@@ -607,7 +607,7 @@ jobs:
             echo "⏹️  Redeployment will not proceed: $REDEPLOYMENT_REASON"
           fi
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
       
       - name: Execute redeployment
         id: redeployment
@@ -674,7 +674,7 @@ jobs:
           
           echo "REDEPLOYMENT_TRIGGERED=$REDEPLOYMENT_TRIGGERED" >> $GITHUB_OUTPUT
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
       
       - name: Handle recovery failure and circuit breaker
         if: failure() || (steps.recovery_evaluation.outputs.RECOVERY_SUCCESSFUL != 'true' && steps.redeployment_evaluation.outputs.SHOULD_REDEPLOY != 'true')
@@ -716,7 +716,7 @@ jobs:
           echo "🚨 Recovery workflow completed with failures"
           echo "Manual intervention may be required to resolve the underlying issues"
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
       
       - name: Generate recovery summary
         if: always()
@@ -868,7 +868,7 @@ jobs:
           
           echo "✅ Recovery workflow summary generated"
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
       
       - name: Cleanup recovery session
         if: always()
@@ -884,4 +884,4 @@ jobs:
           
           echo "✅ Recovery session cleanup completed"
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}

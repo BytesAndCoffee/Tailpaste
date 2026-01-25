@@ -65,35 +65,35 @@ jobs:
         run: |
           source .github/scripts/circuit-breaker/cb-init-monitoring.sh "${{ inputs.action || 'status' }}" >> $GITHUB_ENV
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
       
       - name: Check circuit breaker status
         id: status_check
         run: |
           source .github/scripts/circuit-breaker/cb-check-status.sh "${{ github.repository }}" >> $GITHUB_OUTPUT
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
       
       - name: Check thresholds and auto-open if needed
         if: env.ACTION == 'check-thresholds' || github.event_name == 'schedule'
         run: |
           .github/scripts/circuit-breaker/cb-check-thresholds.sh "${{ github.repository }}"
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
       
       - name: Reset circuit breaker
         if: env.ACTION == 'reset'
         run: |
           .github/scripts/circuit-breaker/cb-reset.sh "${{ github.repository }}" "${{ inputs.reset_failures }}" "${{ github.actor }}"
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
       
       - name: Export circuit breaker logs
         if: env.ACTION == 'export-logs' || github.event_name == 'schedule'
         run: |
           .github/scripts/circuit-breaker/cb-export-logs.sh "${{ github.repository }}"
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
       
       - name: Upload circuit breaker export
         if: env.ACTION == 'export-logs' || github.event_name == 'schedule'
@@ -108,7 +108,7 @@ jobs:
         run: |
           .github/scripts/circuit-breaker/cb-generate-summary.sh
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
           MONITORING_SESSION_ID: ${{ env.MONITORING_SESSION_ID }}
           ACTION: ${{ env.ACTION }}
           CB_STATUS: ${{ steps.status_check.outputs.CB_STATUS }}
@@ -125,4 +125,4 @@ jobs:
         run: |
           .github/scripts/circuit-breaker/cb-cleanup.sh "${{ github.repository }}" "${{ env.MONITORING_SESSION_ID }}"
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}

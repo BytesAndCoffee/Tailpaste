@@ -91,19 +91,19 @@ jobs:
           export INPUT_SKIP_BACKUP="${{ inputs.skip_backup }}"
           .github/scripts/rollback/mr-log-and-validate.sh
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
 
       - name: Acquire rollback lock
         run: |
           .github/scripts/rollback/mr-acquire-lock.sh
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
 
       - name: Determine rollback target artifact
         run: |
           .github/scripts/rollback/mr-determine-target.sh
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
 
       - name: Execute manual rollback with bypass support
         run: |
@@ -181,7 +181,7 @@ jobs:
             gh variable set MANUAL_ROLLBACK_STATUS --body "emergency_triggered" --repo ${{ github.repository }}
           fi
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
 
       - name: Generate manual rollback summary
         if: always()
@@ -247,7 +247,7 @@ jobs:
           echo "---" >> $GITHUB_STEP_SUMMARY
           echo "*🔄 Manual rollback operation completed. All actions have been logged for audit and compliance purposes.*" >> $GITHUB_STEP_SUMMARY
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
 
       - name: Release rollback lock
         if: always()
@@ -262,7 +262,7 @@ jobs:
           
           echo "✅ Rollback lock released"
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
 
       - name: Manual rollback failure notification
         if: failure()
@@ -305,4 +305,4 @@ jobs:
           
           echo "💡 Manual rollback failure information recorded. Immediate manual intervention may be required."
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
