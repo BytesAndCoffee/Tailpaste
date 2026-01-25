@@ -31,6 +31,111 @@ class ArtifactManager:
         self.artifacts_file = Path(".artifacts.json")
         self.registry_cache = {}
 
+    def download_artifacts_metadata(self, commit: Optional[str] = None) -> bool:
+        """
+        Download .artifacts.json from GitHub Actions artifacts if not present locally.
+        
+        Args:
+            commit: Optional commit SHA to find the specific workflow run
+            
+        Returns:
+            True if metadata was downloaded or already exists, False otherwise
+        """
+        if self.artifacts_file.exists():
+            print("Artifact metadata already exists locally", file=sys.stderr)
+            return True
+        
+        print("Attempting to download artifact metadata from GitHub Actions...", file=sys.stderr)
+        
+        try:
+            # Get repository info from git remote
+            result = subprocess.run(
+                ["git", "config", "--get", "remote.origin.url"],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            
+            if result.returncode != 0:
+                print("Warning: Could not determine repository from git remote", file=sys.stderr)
+                return False
+            
+            # Parse repository from git URL (handles both HTTPS and SSH)
+            repo_url = result.stdout.strip()
+            repo_match = re.search(r'github\.com[:/](.+?)(?:\.git)?$', repo_url)
+            if not repo_match:
+                print(f"Warning: Could not parse repository from URL: {repo_url}", file=sys.stderr)
+                return False
+            
+            repo = repo_match.group(1)
+            
+            # Try to find and download artifact metadata from recent CI workflow runs
+            search_limit = 10 if commit else 5
+            
+            # Build the gh CLI command
+            cmd = [
+                "gh", "run", "list",
+                "--repo", repo,
+                "--workflow", "ci.yml",
+                "--branch", "main",
+                "--limit", str(search_limit),
+                "--json", "databaseId,headSha,status",
+                "--jq", "."
+            ]
+            
+            if commit:
+                cmd.extend(["--jq", f'.[] | select(.headSha == "{commit}" and .status == "completed") | .databaseId'])
+            else:
+                cmd.extend(["--jq", '.[] | select(.status == "completed") | .databaseId'])
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            
+            if result.returncode != 0:
+                print(f"Warning: Could not list workflow runs: {result.stderr}", file=sys.stderr)
+                return False
+            
+            # Get list of run IDs
+            run_ids = [rid.strip() for rid in result.stdout.strip().split('\n') if rid.strip()]
+            
+            if not run_ids:
+                print("Warning: No completed CI workflow runs found", file=sys.stderr)
+                return False
+            
+            # Try to download artifact metadata from each run until successful
+            for run_id in run_ids:
+                print(f"Trying to download artifact-metadata from run {run_id}...", file=sys.stderr)
+                
+                download_cmd = [
+                    "gh", "run", "download", run_id,
+                    "--repo", repo,
+                    "--name", "artifact-metadata",
+                    "--dir", "."
+                ]
+                
+                result = subprocess.run(
+                    download_cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=60
+                )
+                
+                if result.returncode == 0 and self.artifacts_file.exists():
+                    print(f"✓ Successfully downloaded artifact metadata from run {run_id}", file=sys.stderr)
+                    return True
+            
+            print("Warning: Could not download artifact metadata from any workflow run", file=sys.stderr)
+            return False
+            
+        except subprocess.TimeoutExpired:
+            print("Warning: Timeout while downloading artifact metadata", file=sys.stderr)
+            return False
+        except subprocess.SubprocessError as e:
+            print(f"Warning: Error downloading artifact metadata: {e}", file=sys.stderr)
+            return False
+        except Exception as e:
+            print(f"Warning: Unexpected error downloading artifact metadata: {e}", file=sys.stderr)
+            return False
+
     def load_artifacts(self) -> Dict:
         """Load existing artifact metadata from file."""
         if self.artifacts_file.exists():
@@ -118,7 +223,12 @@ class ArtifactManager:
         print(f"Recorded artifact: {artifact_id} -> {digest}")
 
     def get_digest_for_commit(self, commit: str) -> Optional[str]:
-        """Get the digest for a specific commit."""
+        """Get the digest for a specific commit. Auto-downloads metadata if not present."""
+        # Try to download metadata if not present locally
+        if not self.artifacts_file.exists():
+            print(f"Artifact metadata not found locally, attempting to download for commit {commit}...", file=sys.stderr)
+            self.download_artifacts_metadata(commit)
+        
         data = self.load_artifacts()
 
         for artifact_info in data.get("artifacts", {}).values():
@@ -179,10 +289,15 @@ class ArtifactManager:
     def update_artifact_status(
         self, digest: str, status: str, timestamp: str = None
     ) -> None:
-        """Update the status of an existing artifact."""
+        """Update the status of an existing artifact. Auto-downloads metadata if not present."""
         if not self.validate_digest(digest):
             print(f"Error: Invalid digest format: {digest}", file=sys.stderr)
             sys.exit(1)
+
+        # Try to download metadata if not present locally
+        if not self.artifacts_file.exists():
+            print("Artifact metadata not found locally, attempting to download...", file=sys.stderr)
+            self.download_artifacts_metadata()
 
         data = self.load_artifacts()
 
@@ -208,7 +323,12 @@ class ArtifactManager:
         self.save_artifacts(data)
 
     def get_artifact_status(self, digest: str) -> Optional[str]:
-        """Get the current status of an artifact."""
+        """Get the current status of an artifact. Auto-downloads metadata if not present."""
+        # Try to download metadata if not present locally
+        if not self.artifacts_file.exists():
+            print("Artifact metadata not found locally, attempting to download...", file=sys.stderr)
+            self.download_artifacts_metadata()
+        
         data = self.load_artifacts()
 
         for artifact_info in data.get("artifacts", {}).values():
@@ -263,7 +383,12 @@ class ArtifactManager:
         self.save_artifacts(data)
 
     def get_test_results(self, digest: str) -> Optional[Dict]:
-        """Get test results for an artifact."""
+        """Get all test results for an artifact. Auto-downloads metadata if not present."""
+        # Try to download metadata if not present locally
+        if not self.artifacts_file.exists():
+            print("Artifact metadata not found locally, attempting to download...", file=sys.stderr)
+            self.download_artifacts_metadata()
+        
         data = self.load_artifacts()
 
         for artifact_info in data.get("artifacts", {}).values():
