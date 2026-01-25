@@ -123,7 +123,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-      actions: write
     outputs:
       image-digest: ${{ steps.build.outputs.digest }}
       image-tag: ${{ steps.meta.outputs.tags }}
@@ -223,16 +222,6 @@ jobs:
             --commit ${{ github.sha }} \
             --registry ${{ env.REGISTRY }} \
             --repository ${{ env.IMAGE_NAME }}
-      
-      - name: Store artifact digest in repository variable
-        run: |
-          echo "📦 Storing artifact digest for commit ${{ github.sha }}"
-          gh variable set "ARTIFACT_${{ github.sha }}_DIGEST" --body "${{ steps.digest.outputs.digest }}" --repo ${{ github.repository }}
-          gh variable set "ARTIFACT_${{ github.sha }}_STATUS" --body "built" --repo ${{ github.repository }}
-          gh variable set "ARTIFACT_${{ github.sha }}_TIMESTAMP" --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }}
-          echo "✅ Artifact digest stored in repository variables"
-        env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
       
       - name: Validate artifact digest
         run: |
