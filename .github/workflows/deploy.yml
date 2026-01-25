@@ -450,6 +450,11 @@ jobs:
           tags: tag:ci
           ping: docker.tailfa875.ts.net
       
+      - name: Set ssh in Tailscale
+        run: |
+          echo "🔧 Setting up SSH access via Tailscale..."
+          sudo tailscale set --ssh
+
       - name: 🐛 Debug SSH Access (when enabled)
         if: true  # Change to 'false' to disable SSH debugging
         run: |
