@@ -36,6 +36,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       
+      - name: Install GitHub CLI
+        run: |
+          if ! command -v gh &> /dev/null; then
+            echo "Installing GitHub CLI..."
+            sudo apt-get update
+            sudo apt-get install -y gh
+          else
+            echo "GitHub CLI already installed"
+          fi
+      
       - name: Set up Python
         uses: actions/setup-python@v4
         with:

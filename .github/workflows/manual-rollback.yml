@@ -57,6 +57,16 @@ jobs:
       cancel-in-progress: false
     
     steps:
+      - name: Install GitHub CLI
+        run: |
+          if ! command -v gh &> /dev/null; then
+            echo "Installing GitHub CLI..."
+            sudo apt-get update
+            sudo apt-get install -y gh
+          else
+            echo "GitHub CLI already installed"
+          fi
+
       - name: Log manual rollback initiation and validate inputs
         run: |
           # Use extracted script for rollback initialization and validation
