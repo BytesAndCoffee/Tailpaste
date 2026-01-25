@@ -130,6 +130,15 @@ jobs:
             "${{ steps.test-results.outputs.status }}" \
             "${{ steps.get-artifact.outputs.digest }}" >> $GITHUB_OUTPUT
 
+      - name: Upload updated artifact metadata
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifact-metadata
+          path: .artifacts.json
+          retention-days: 7
+          overwrite: true
+
       - name: Integration test summary
         if: always()
         run: |
