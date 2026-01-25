@@ -438,6 +438,27 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
 
+      - name: Checkout code
+        uses: actions/checkout@v4
+        if: ${{ !inputs.rollback }}
+
+      - name: Install GitHub CLI
+        run: |
+          if ! command -v gh &> /dev/null; then
+            echo "Installing GitHub CLI..."
+            sudo apt-get update
+            sudo apt-get install -y gh
+          fi
+
+      - name: Download artifact metadata from CI workflow
+        if: github.event_name == 'workflow_run'
+        run: |
+          gh run download "${{ github.event.workflow_run.id }}" \
+            --name artifact-metadata \
+            --dir . || echo "Warning: Could not download artifact metadata"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Validate integration test results and artifact deployability
         if: github.event_name == 'workflow_run' || (github.event_name == 'workflow_dispatch' && inputs.bypass_gating != true)
         run: |
