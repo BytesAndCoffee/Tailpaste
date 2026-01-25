@@ -529,14 +529,13 @@ jobs:
           echo "🔍 .artifacts.json content (for debug):"
           cat .artifacts.json
           
-          # Get artifact digest for this commit (capture stderr for debugging)
+          # Get artifact digest for this commit
           echo "🔍 Running: python scripts/ci/artifact_manager.py get-digest --commit $COMMIT_SHA"
-          DIGEST=$(python scripts/ci/artifact_manager.py get-digest --commit $COMMIT_SHA 2>&1)
+          DIGEST=$(python scripts/ci/artifact_manager.py get-digest --commit $COMMIT_SHA)
           
-          # Check if DIGEST contains error messages
-          if echo "$DIGEST" | grep -q "No digest found"; then
-            echo "❌ Error from artifact_manager.py:"
-            echo "$DIGEST"
+          # Check if DIGEST is empty or contains "No digest found"
+          if [ -z "$DIGEST" ] || echo "$DIGEST" | grep -q "No digest found"; then
+            echo "❌ Error: No digest found for commit $COMMIT_SHA"
             DIGEST=""
           fi
           
