@@ -58,9 +58,15 @@ touch /data/.test && rm /data/.test || {
 
 echo "Starting tailpaste..."
 
-# Start the Flask app in the background
-python /app/main.py &
-APP_PID=$!
+# Function to start the app
+start_app() {
+    python /app/main.py &
+    APP_PID=$!
+    echo "App started with PID: $APP_PID"
+}
+
+# Start the app initially
+start_app
 
 # Wait for the app to be ready
 sleep 2
@@ -75,5 +81,21 @@ echo "  SSH as 'inspector' user: tailscale ssh inspector@<tailnet-hostname>"
 echo "  User has sudo access for service inspection"
 echo ""
 
-# Wait for the app process
-wait $APP_PID
+# Monitor and restart app if it crashes
+while true; do
+    if ! kill -0 $APP_PID 2>/dev/null; then
+        echo "ERROR: App process $APP_PID died at $(date)"
+        echo "Restarting app in 5 seconds..."
+        sleep 5
+        start_app
+    fi
+    
+    # Check tailscaled is still running
+    if ! kill -0 $TAILSCALED_PID 2>/dev/null; then
+        echo "ERROR: Tailscaled died at $(date)"
+        echo "Container must restart to recover Tailscale"
+        exit 1
+    fi
+    
+    sleep 10
+done
