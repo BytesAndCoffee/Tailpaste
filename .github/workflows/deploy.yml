@@ -820,10 +820,11 @@ jobs:
               
               echo "📥 Pulling backup artifact from registry..."
               FULL_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${BACKUP_DIGEST}"
-              docker pull "\$FULL_IMAGE"
+              FULL_IMAGE_LOWER="\${FULL_IMAGE,,}"
+              docker pull "\$FULL_IMAGE_LOWER"
               
               # Tag the pulled image for docker-compose
-              docker tag "\$FULL_IMAGE" tailpaste-tailpaste:latest
+              docker tag "\$FULL_IMAGE_LOWER" tailpaste-tailpaste:latest
               
               echo "🛑 Stopping current container..."
               docker compose -f docker-compose.yml down
@@ -1156,10 +1157,11 @@ jobs:
             
             echo "📥 Pulling tested artifact from registry..."
             FULL_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${ARTIFACT_DIGEST}"
-            docker pull "\$FULL_IMAGE"
+            FULL_IMAGE_LOWER="\${FULL_IMAGE,,}"
+            docker pull "\$FULL_IMAGE_LOWER"
             
             # Tag the pulled image for docker-compose
-            docker tag "\$FULL_IMAGE" tailpaste-tailpaste:latest
+            docker tag "\$FULL_IMAGE_LOWER" tailpaste-tailpaste:latest
             
             echo "🛑 Stopping existing container (production)..."
             docker compose -f docker-compose.yml down
