@@ -472,6 +472,21 @@ jobs:
             gh run download "$CI_RUN_ID" \
               --name artifact-metadata \
               --dir . || echo "Warning: Could not download artifact metadata from CI run $CI_RUN_ID"
+            
+            # Debug: Check if .artifacts.json was downloaded
+            echo "📋 Checking for .artifacts.json file..."
+            ls -la .artifacts.json || echo "❌ .artifacts.json not found in current directory"
+            if [ -f .artifacts.json ]; then
+              echo "✅ .artifacts.json found"
+              echo "File contents:"
+              cat .artifacts.json | jq '.' || cat .artifacts.json
+            else
+              echo "❌ Error: .artifacts.json file not found after download"
+              echo "Current directory: $(pwd)"
+              echo "Files in current directory:"
+              ls -la
+              exit 1
+            fi
           else
             echo "Error: Could not find CI workflow run for commit $COMMIT_SHA"
             exit 1
@@ -496,12 +511,26 @@ jobs:
           # Get the commit SHA from the integration test workflow
           COMMIT_SHA="${{ github.event.workflow_run.head_sha }}"
           
+          # Debug: Check if artifacts file exists
+          if [ ! -f .artifacts.json ]; then
+            echo "❌ Error: .artifacts.json file not found"
+            echo "Current directory: $(pwd)"
+            echo "Files in current directory:"
+            ls -la
+            exit 1
+          fi
+          
+          echo "📋 .artifacts.json file found, checking for commit: $COMMIT_SHA"
+          
           # Get artifact digest for this commit
           DIGEST=$(python scripts/ci/artifact_manager.py get-digest --commit $COMMIT_SHA 2>/dev/null || echo "")
           
           if [ -z "$DIGEST" ]; then
             echo "❌ No artifact found for commit $COMMIT_SHA"
             echo "This indicates the CI workflow did not create an artifact"
+            echo ""
+            echo "📋 Artifacts in .artifacts.json:"
+            cat .artifacts.json | jq '.artifacts' || cat .artifacts.json
             exit 1
           fi
           
