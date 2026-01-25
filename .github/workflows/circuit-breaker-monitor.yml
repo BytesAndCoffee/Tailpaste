@@ -26,6 +26,11 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
+# Required permissions for the entire workflow
+permissions:
+  contents: read
+  actions: write      # Required to set repository variables
+
 jobs:
   circuit-breaker-monitor:
     name: Circuit Breaker Monitoring and Management

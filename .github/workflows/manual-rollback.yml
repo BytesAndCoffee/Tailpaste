@@ -45,6 +45,12 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
+# Required permissions for the entire workflow
+permissions:
+  contents: read
+  actions: write      # Required to set repository variables
+  packages: read
+
 jobs:
   manual-rollback:
     name: Execute Manual Rollback

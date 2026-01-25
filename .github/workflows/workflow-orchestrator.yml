@@ -39,6 +39,11 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
+# Required permissions for the entire workflow
+permissions:
+  contents: read
+  actions: write      # Required to set repository variables
+
 jobs:
   workflow-orchestration:
     name: Workflow Orchestration and Coordination
