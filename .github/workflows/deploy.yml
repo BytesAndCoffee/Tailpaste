@@ -453,9 +453,29 @@ jobs:
       - name: Download artifact metadata from CI workflow
         if: github.event_name == 'workflow_run'
         run: |
-          gh run download "${{ github.event.workflow_run.id }}" \
-            --name artifact-metadata \
-            --dir . || echo "Warning: Could not download artifact metadata"
+          # The workflow_run.id is from Integration Tests, not CI
+          # We need to find the CI workflow run for this commit
+          COMMIT_SHA="${{ github.event.workflow_run.head_sha }}"
+          echo "Finding CI workflow run for commit: $COMMIT_SHA"
+          
+          CI_RUN_ID=$(gh run list \
+            --repo ${{ github.repository }} \
+            --workflow ci.yml \
+            --branch main \
+            --limit 20 \
+            --json databaseId,headSha,status \
+            --jq ".[] | select(.headSha == \"$COMMIT_SHA\" and .status == \"completed\") | .databaseId" \
+            | head -n 1)
+          
+          if [ -n "$CI_RUN_ID" ]; then
+            echo "Found CI workflow run: $CI_RUN_ID"
+            gh run download "$CI_RUN_ID" \
+              --name artifact-metadata \
+              --dir . || echo "Warning: Could not download artifact metadata from CI run $CI_RUN_ID"
+          else
+            echo "Error: Could not find CI workflow run for commit $COMMIT_SHA"
+            exit 1
+          fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
