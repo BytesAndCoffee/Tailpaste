@@ -121,10 +121,21 @@ class ArtifactManager:
         """Get the digest for a specific commit."""
         data = self.load_artifacts()
 
-        for artifact_info in data.get("artifacts", {}).values():
-            if artifact_info.get("commit") == commit:
-                return artifact_info.get("digest")
+        # Debug output
+        print(f"DEBUG: Looking for commit: {commit}", file=sys.stderr)
+        print(f"DEBUG: Artifacts file path: {self.artifacts_file.absolute()}", file=sys.stderr)
+        print(f"DEBUG: File exists: {self.artifacts_file.exists()}", file=sys.stderr)
+        print(f"DEBUG: Number of artifacts: {len(data.get('artifacts', {}))}", file=sys.stderr)
+        
+        for artifact_id, artifact_info in data.get("artifacts", {}).items():
+            artifact_commit = artifact_info.get("commit")
+            print(f"DEBUG: Checking artifact {artifact_id}, commit: {artifact_commit}", file=sys.stderr)
+            if artifact_commit == commit:
+                digest = artifact_info.get("digest")
+                print(f"DEBUG: Match found! Digest: {digest}", file=sys.stderr)
+                return digest
 
+        print(f"DEBUG: No match found after checking all artifacts", file=sys.stderr)
         return None
 
     def validate_artifact_exists(
