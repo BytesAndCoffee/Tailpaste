@@ -159,9 +159,9 @@ jobs:
         if: always()
         run: |
           echo "🧹 Cleaning up testing resources only..."
-          # Prune only dangling images/containers (safe for production)
-          docker image prune -f || true
-          docker container prune -f || true
+          # Prune ONLY testing-labeled containers and images
+          docker ps -a --filter "label=environment=testing" --filter "label=managed-by=ci" -q | xargs -r docker rm -f || true
+          docker images --filter "label=environment=testing" --filter "label=managed-by=ci" -q | xargs -r docker rmi -f || true
           echo "✅ Cleanup complete - production resources preserved"
 
       - name: Trivy filesystem scan (vuln + secrets)
@@ -188,14 +188,14 @@ jobs:
         if: always()
         run: |
           docker compose -f docker-compose.test.yml down || true
-          # Remove testing containers
+          # Remove testing containers (with both labels)
           docker ps -a --filter "label=environment=testing" --filter "label=managed-by=ci" -q | xargs -r docker rm -f || true
-          # Remove testing images
+          # Remove testing images (with both labels)
           docker images --filter "label=environment=testing" --filter "label=managed-by=ci" -q | xargs -r docker rmi -f || true
-          # Remove testing volumes
+          # Remove testing volumes (with both labels)
           docker volume ls --filter "label=environment=testing" --filter "label=managed-by=ci" -q | xargs -r docker volume rm || true
-          # Extra safety: remove any orphaned testing containers
-          docker ps -a --filter "label=environment=testing" -q | xargs -r docker rm -f || true
+          # Remove dangling/untagged images from testing builds only
+          docker images --filter "dangling=true" --filter "label=environment=testing" -q | xargs -r docker rmi -f || true
 
   dependency-update-check:
     name: Check for Dependency Updates
