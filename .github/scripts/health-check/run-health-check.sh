@@ -10,7 +10,7 @@ echo "🛠️ Checking environment variables..."
 echo "TAILPASTE_URL: $TAILPASTE_URL"
 
 # Run the health check script
-python3 scripts/health_check.py --export /tmp/health_check_results.json
+python3 scripts/health/health_check.py --export /tmp/health_check_results.json
 
 # Store the exit code
 HEALTH_STATUS=$?
