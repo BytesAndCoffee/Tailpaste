@@ -296,7 +296,7 @@ sudo netstat -tlnp            # Monitor connections
 htop                          # View processes
 ```
 
-For complete details, see the [Service Inspector Guide](docs/INSPECTOR_GUIDE.md).
+For complete details, see the [Service Inspector Guide](docs/INSPECTOR_GUIDE.md)
 
 ## License
 
