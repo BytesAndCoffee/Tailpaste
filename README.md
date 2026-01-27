@@ -49,7 +49,7 @@ A minimalist paste-sharing service inspired by ix.io that leverages Tailscale fo
    ```bash
    docker compose ps                    # Check status
    docker compose logs -f               # View logs
-   docker compose exec tailpaste tailscale status
+   docker compose exec tailpaste tailscale status # Check tailscale status in container
    tailscale ssh inspector@tailpaste    # SSH for debugging
    ```
 
