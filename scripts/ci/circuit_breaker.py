@@ -24,6 +24,10 @@ class CircuitBreakerManager:
                 "GitHub token not found. Set GITHUB_TOKEN or GH_TOKEN environment variable."
             )
 
+        # GitHub Actions variables cannot be truly empty; use a lightweight placeholder
+        # to represent a cleared value without deleting the variable.
+        self.clear_placeholder = "unset"
+
     def _run_gh_command(self, command: list) -> tuple[bool, str]:
         """Run a GitHub CLI command and return success status and output"""
         try:
@@ -209,9 +213,9 @@ class CircuitBreakerManager:
                 success = False
                 print(f"❌ Failed to set {name}")
 
-        # Clear variables (by setting to empty)
+        # Clear variables using a placeholder value to satisfy API requirements
         for name in variables_to_clear:
-            if not self.set_variable(name, ""):
+            if not self.set_variable(name, self.clear_placeholder):
                 print(f"⚠️  Warning: Failed to clear {name}")
 
         if success:
