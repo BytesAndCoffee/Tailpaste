@@ -576,7 +576,10 @@ class HealthChecker:
         results = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "session_id": self.session_id,
-            "checks": self.results,
+            "checks": {
+                name: {"status": "passed" if passed else "failed"}
+                for name, passed in self.results.items()
+            },
             "errors": self.errors,
             "warnings": self.warnings,
             "metrics": self.metrics,
