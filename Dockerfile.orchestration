@@ -1,0 +1,59 @@
+# Orchestration API & State Management
+# Runs on plex host as the execution plane for CI/CD
+# Multi-target build: orchestration-api (API server), orchestration-worker (orchestrator/health-monitor)
+
+FROM python:3.11-slim as base
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    git \
+    sqlite3 \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements
+COPY requirements-orchestration.txt .
+RUN pip install --no-cache-dir -r requirements-orchestration.txt
+
+# Copy application code
+COPY src/ ./src/
+COPY scripts/ ./scripts/
+COPY main.py .
+COPY config.toml.example ./config.example.toml
+
+# Create data directories
+RUN mkdir -p /data/state /data/logs /data/artifacts
+
+# Copy orchestration modules
+COPY orchestration/ ./orchestration/
+
+# Make scripts executable
+RUN chmod +x /app/orchestration/*.py
+
+ENV PYTHONUNBUFFERED=1 \
+    ORCHESTRATION_DB_PATH=/data/state/orchestration.db \
+    ORCHESTRATION_LOG_PATH=/data/logs \
+    LOG_LEVEL=INFO
+
+# ===== API Server Target =====
+FROM base as orchestration-api
+
+ENV FLASK_APP=orchestration/api_server.py \
+    FLASK_ENV=production
+
+EXPOSE 5000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:5000/api/health/status || exit 1
+
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "4", "--timeout", "120", "--access-logfile", "-", "--error-logfile", "-", "orchestration.api_server:create_app()"]
+
+# ===== Worker Target =====
+FROM base as orchestration-worker
+
+ENV ORCHESTRATION_MODE=orchestrator
+
+CMD ["python", "-u", "/app/orchestration/worker.py"]

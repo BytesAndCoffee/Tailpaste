@@ -1,0 +1,158 @@
+version: '3.9'
+
+services:
+  # REST API for GitHub Actions to trigger and query orchestration
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.orchestration
+      target: orchestration-api
+    container_name: tailpaste-cicd-api
+    
+    volumes:
+      - cicd-state:/data/state
+      - cicd-logs:/data/logs
+      - cicd-artifacts:/data/artifacts
+      - /var/run/tailscale/tailscaled.sock:/var/run/tailscale/tailscaled.sock:ro
+      # Mount source code for debugging
+      - ./scripts:/app/scripts:ro
+      - ./src:/app/src:ro
+
+    environment:
+      ORCHESTRATION_DB_PATH: /data/state/orchestration.db
+      ORCHESTRATION_LOG_PATH: /data/logs
+      FLASK_ENV: production
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Tailscale socket for authentication
+      TS_SOCKET: /var/run/tailscale/tailscaled.sock
+      # GitHub integration
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      GITHUB_REPOSITORY: ${GITHUB_REPOSITORY}
+      # API configuration
+      API_PORT: 5000
+      API_WORKERS: 4
+      API_TIMEOUT: 120
+
+    ports:
+      - "5000:5000"
+    
+    networks:
+      - tailpaste-cicd
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/health/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+    restart: unless-stopped
+    
+    depends_on:
+      - database-init
+
+  # Orchestrator: manages workflow state, scheduling, and recovery
+  orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile.orchestration
+      target: orchestration-worker
+    container_name: tailpaste-cicd-orchestrator
+    
+    volumes:
+      - cicd-state:/data/state
+      - cicd-logs:/data/logs
+      - /var/run/tailscale/tailscaled.sock:/var/run/tailscale/tailscaled.sock:ro
+      - ./scripts:/app/scripts:ro
+
+    environment:
+      ORCHESTRATION_DB_PATH: /data/state/orchestration.db
+      ORCHESTRATION_LOG_PATH: /data/logs
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      TS_SOCKET: /var/run/tailscale/tailscaled.sock
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      GITHUB_REPOSITORY: ${GITHUB_REPOSITORY}
+      ORCHESTRATION_MODE: orchestrator
+      # Scheduling
+      HEALTH_CHECK_INTERVAL: 300  # 5 minutes
+      ORCHESTRATION_INTERVAL: 900  # 15 minutes
+      CLEANUP_INTERVAL: 1800  # 30 minutes
+
+    networks:
+      - tailpaste-cicd
+
+    restart: unless-stopped
+    
+    depends_on:
+      api:
+        condition: service_healthy
+
+  # Health Monitor: tracks application and infrastructure health
+  health-monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile.orchestration
+      target: orchestration-worker
+    container_name: tailpaste-cicd-health-monitor
+    
+    volumes:
+      - cicd-state:/data/state
+      - cicd-logs:/data/logs
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/run/tailscale/tailscaled.sock:/var/run/tailscale/tailscaled.sock:ro
+
+    environment:
+      ORCHESTRATION_DB_PATH: /data/state/orchestration.db
+      ORCHESTRATION_LOG_PATH: /data/logs
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      TS_SOCKET: /var/run/tailscale/tailscaled.sock
+      ORCHESTRATION_MODE: health-monitor
+      HEALTH_CHECK_INTERVAL: 300  # 5 minutes
+      # Health check targets
+      TAILPASTE_SERVICE_URL: http://tailpaste:8080
+      TAILSCALE_CHECK_ENABLED: "true"
+      DATABASE_CHECK_ENABLED: "true"
+
+    networks:
+      - tailpaste-cicd
+
+    restart: unless-stopped
+    
+    depends_on:
+      api:
+        condition: service_healthy
+
+  # Database initialization (runs once)
+  database-init:
+    build:
+      context: .
+      dockerfile: Dockerfile.orchestration
+      target: orchestration-api
+    container_name: tailpaste-cicd-init
+    
+    volumes:
+      - cicd-state:/data/state
+      - ./orchestration/init_db.py:/app/init_db.py:ro
+
+    environment:
+      ORCHESTRATION_DB_PATH: /data/state/orchestration.db
+
+    command: python /app/init_db.py
+
+    networks:
+      - tailpaste-cicd
+
+    restart: "no"
+
+volumes:
+  cicd-state:
+    driver: local
+  cicd-logs:
+    driver: local
+  cicd-artifacts:
+    driver: local
+
+networks:
+  tailpaste-cicd:
+    driver: bridge
