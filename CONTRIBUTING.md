@@ -10,7 +10,7 @@ Be respectful and constructive in all interactions. We're here to build somethin
 
 ### Prerequisites
 
-- Python 3.8 or higher
+- Python 3.10 or higher
 - Tailscale installed and running
 - Docker (for containerized deployment)
 - Git
