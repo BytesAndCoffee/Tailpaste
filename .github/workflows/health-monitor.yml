@@ -33,6 +33,7 @@ jobs:
     permissions:
       contents: read
       actions: write      # Required to set repository variables
+      id-token: write     # Required for OIDC and some API calls
     
     # Prevent concurrent health monitoring runs
     concurrency:
@@ -80,35 +81,46 @@ jobs:
       
       - name: Initialize health monitoring session
         run: |
+          if [ -z "${{ secrets.GITHUB_TOKEN }}" ]; then
+            echo "GITHUB_TOKEN is not set. Exiting."
+            exit 1
+          fi
+          export GH_TOKEN="${{ secrets.GITHUB_TOKEN }}"
           .github/scripts/health-check/init-monitoring-session.sh
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
       - name: Execute comprehensive health checks
         id: health_checks
         run: |
+          if [ -z "${{ secrets.GITHUB_TOKEN }}" ]; then
+            echo "GITHUB_TOKEN is not set. Exiting."
+            exit 1
+          fi
+          export GH_TOKEN="${{ secrets.GITHUB_TOKEN }}"
           .github/scripts/health-check/execute-health-checks.sh
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
       - name: Record health check results
         run: |
+          if [ -z "${{ secrets.GITHUB_TOKEN }}" ]; then
+            echo "GITHUB_TOKEN is not set. Exiting."
+            exit 1
+          fi
+          export GH_TOKEN="${{ secrets.GITHUB_TOKEN }}"
           .github/scripts/health-check/record-health-results.sh "${{ steps.health_checks.outputs.OVERALL_HEALTH }}" "${{ steps.health_checks.outputs.HEALTH_DETAILS }}"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
       - name: Evaluate recovery conditions
         id: recovery_evaluation
         run: |
           echo "🔍 Evaluating recovery conditions..."
-          
+          if [ -z "${{ secrets.GITHUB_TOKEN }}" ]; then
+            echo "GITHUB_TOKEN is not set. Exiting."
+            exit 1
+          fi
+          export GH_TOKEN="${{ secrets.GITHUB_TOKEN }}"
           OVERALL_HEALTH="${{ steps.health_checks.outputs.OVERALL_HEALTH }}"
           FORCE_RECOVERY="${{ inputs.force_recovery }}"
           SKIP_RECOVERY="${{ inputs.skip_recovery }}"
-          
           SHOULD_TRIGGER_RECOVERY=false
           RECOVERY_REASON=""
-          
           # Check if recovery should be triggered
           if [ "$SKIP_RECOVERY" = "true" ]; then
             echo "⏭️  Recovery skipped by manual input"
@@ -172,16 +184,18 @@ jobs:
         if: steps.recovery_evaluation.outputs.SHOULD_TRIGGER_RECOVERY == 'true'
         run: |
           echo "🚀 Triggering recovery workflow..."
-          
+          if [ -z "${{ secrets.GITHUB_TOKEN }}" ]; then
+            echo "GITHUB_TOKEN is not set. Exiting."
+            exit 1
+          fi
+          export GH_TOKEN="${{ secrets.GITHUB_TOKEN }}"
           RECOVERY_REASON="${{ steps.recovery_evaluation.outputs.RECOVERY_REASON }}"
           OVERALL_HEALTH="${{ steps.health_checks.outputs.OVERALL_HEALTH }}"
-          
           # Clear any pending recovery triggers since we now have the workflow
           gh variable delete PENDING_RECOVERY_TRIGGER --repo ${{ github.repository }} 2>/dev/null || true
           gh variable delete PENDING_RECOVERY_REASON --repo ${{ github.repository }} 2>/dev/null || true
           gh variable delete PENDING_RECOVERY_HEALTH_STATUS --repo ${{ github.repository }} 2>/dev/null || true
           gh variable delete PENDING_RECOVERY_TIMESTAMP --repo ${{ github.repository }} 2>/dev/null || true
-          
           # Trigger recovery workflow
           gh workflow run recovery.yml \
             --repo ${{ github.repository }} \
@@ -189,32 +203,30 @@ jobs:
             --field recovery_reason="$RECOVERY_REASON" \
             --field monitoring_session_id="$MONITORING_SESSION_ID" \
             --field triggered_by="health_monitor"
-          
           if [ $? -eq 0 ]; then
             echo "✅ Recovery workflow triggered successfully"
-            
             # Record recovery trigger
             gh variable set LAST_RECOVERY_TRIGGER --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }}
             gh variable set LAST_RECOVERY_TRIGGER_REASON --body "$RECOVERY_REASON" --repo ${{ github.repository }}
           else
             echo "❌ Failed to trigger recovery workflow"
-            
             # Record failure
             gh variable set LAST_RECOVERY_TRIGGER_FAILURE --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }}
           fi
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
       - name: Generate health monitoring summary
         if: always()
         run: |
           echo "📋 Generating health monitoring summary..."
-          
+          if [ -z "${{ secrets.GITHUB_TOKEN }}" ]; then
+            echo "GITHUB_TOKEN is not set. Exiting."
+            exit 1
+          fi
+          export GH_TOKEN="${{ secrets.GITHUB_TOKEN }}"
           OVERALL_HEALTH="${{ steps.health_checks.outputs.OVERALL_HEALTH }}"
           HEALTH_DETAILS="${{ steps.health_checks.outputs.HEALTH_DETAILS }}"
           SHOULD_TRIGGER_RECOVERY="${{ steps.recovery_evaluation.outputs.SHOULD_TRIGGER_RECOVERY }}"
           RECOVERY_REASON="${{ steps.recovery_evaluation.outputs.RECOVERY_REASON }}"
-          
           # Create comprehensive summary
           echo "## 🏥 Continuous Health Monitoring Report" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -223,9 +235,7 @@ jobs:
           echo "- **Timestamp**: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_STEP_SUMMARY
           echo "- **Deployed Artifact**: \`${DEPLOYED_DIGEST:-'none'}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          
           echo "### Health Check Results" >> $GITHUB_STEP_SUMMARY
-          
           # Overall status with emoji
           case "$OVERALL_HEALTH" in
             "healthy")
@@ -241,44 +251,38 @@ jobs:
               echo "- **Overall Status**: ❓ **UNKNOWN**" >> $GITHUB_STEP_SUMMARY
               ;;
           esac
-          
           echo "- **Details**: $HEALTH_DETAILS" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          
           # Individual check results
           echo "### Individual Check Results" >> $GITHUB_STEP_SUMMARY
-          
           SERVICE_AVAILABLE="${{ steps.health_checks.outputs.SERVICE_AVAILABLE }}"
           FUNCTIONALITY_OK="${{ steps.health_checks.outputs.FUNCTIONALITY_OK }}"
           CONTAINER_HEALTHY="${{ steps.health_checks.outputs.CONTAINER_HEALTHY }}"
-          
           echo "- **Service Availability**: $([ "$SERVICE_AVAILABLE" = "true" ] && echo "✅ Available" || echo "❌ Unavailable")" >> $GITHUB_STEP_SUMMARY
           echo "- **Basic Functionality**: $([ "$FUNCTIONALITY_OK" = "true" ] && echo "✅ Working" || echo "❌ Failed")" >> $GITHUB_STEP_SUMMARY
           echo "- **Container Health**: $([ "$CONTAINER_HEALTHY" = "true" ] && echo "✅ Healthy" || echo "❌ Unhealthy")" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          
           # Recovery evaluation
           echo "### Recovery Evaluation" >> $GITHUB_STEP_SUMMARY
           echo "- **Recovery Needed**: $([ "$SHOULD_TRIGGER_RECOVERY" = "true" ] && echo "✅ Yes" || echo "❌ No")" >> $GITHUB_STEP_SUMMARY
           echo "- **Reason**: $RECOVERY_REASON" >> $GITHUB_STEP_SUMMARY
-          
           if [ "$SHOULD_TRIGGER_RECOVERY" = "true" ]; then
             echo "- **Action**: Recovery workflow triggered" >> $GITHUB_STEP_SUMMARY
           fi
-          
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "---" >> $GITHUB_STEP_SUMMARY
           echo "*🔄 Next health check scheduled in 5 minutes*" >> $GITHUB_STEP_SUMMARY
-          
           echo "✅ Health monitoring summary generated"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
       - name: Cleanup monitoring session
         if: always()
         run: |
           echo "🧹 Cleaning up monitoring session..."
-          
+          if [ -z "${{ secrets.GITHUB_TOKEN }}" ]; then
+            echo "GITHUB_TOKEN is not set. Exiting."
+            exit 1
+          fi
+          export GH_TOKEN="${{ secrets.GITHUB_TOKEN }}"
           # Check if gh CLI is available
           if ! command -v gh &> /dev/null; then
             echo "⚠️  GitHub CLI not available - skipping variable cleanup"
@@ -286,12 +290,8 @@ jobs:
           else
             # Clear session variables
             gh variable delete HEALTH_MONITORING_SESSION --repo ${{ github.repository }} 2>/dev/null || true
-            
             # Update last completed monitoring session
             gh variable set LAST_COMPLETED_HEALTH_CHECK --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }} || echo "⚠️  Failed to update LAST_COMPLETED_HEALTH_CHECK"
             gh variable set LAST_COMPLETED_SESSION_ID --body "$MONITORING_SESSION_ID" --repo ${{ github.repository }} || echo "⚠️  Failed to update LAST_COMPLETED_SESSION_ID"
-            
             echo "✅ Monitoring session cleanup completed"
           fi
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
