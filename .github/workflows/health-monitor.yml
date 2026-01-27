@@ -43,13 +43,8 @@ jobs:
       
       - name: Install GitHub CLI
         run: |
-          if ! command -v gh &> /dev/null; then
-            echo "Installing GitHub CLI..."
-            sudo apt-get update
-            sudo apt-get install -y gh
-          else
-            echo "GitHub CLI already installed"
-          fi
+          chmod +x .github/scripts/install-gh-cli.sh
+          .github/scripts/install-gh-cli.sh
       
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -281,13 +276,19 @@ jobs:
         run: |
           echo "🧹 Cleaning up monitoring session..."
           
-          # Clear session variables
-          gh variable delete HEALTH_MONITORING_SESSION --repo ${{ github.repository }} 2>/dev/null || true
-          
-          # Update last completed monitoring session
-          gh variable set LAST_COMPLETED_HEALTH_CHECK --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }}
-          gh variable set LAST_COMPLETED_SESSION_ID --body "$MONITORING_SESSION_ID" --repo ${{ github.repository }}
-          
-          echo "✅ Monitoring session cleanup completed"
+          # Check if gh CLI is available
+          if ! command -v gh &> /dev/null; then
+            echo "⚠️  GitHub CLI not available - skipping variable cleanup"
+            echo "   (Variables will be cleaned up on next successful run)"
+          else
+            # Clear session variables
+            gh variable delete HEALTH_MONITORING_SESSION --repo ${{ github.repository }} 2>/dev/null || true
+            
+            # Update last completed monitoring session
+            gh variable set LAST_COMPLETED_HEALTH_CHECK --body "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --repo ${{ github.repository }} || echo "⚠️  Failed to update LAST_COMPLETED_HEALTH_CHECK"
+            gh variable set LAST_COMPLETED_SESSION_ID --body "$MONITORING_SESSION_ID" --repo ${{ github.repository }} || echo "⚠️  Failed to update LAST_COMPLETED_SESSION_ID"
+            
+            echo "✅ Monitoring session cleanup completed"
+          fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
