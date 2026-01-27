@@ -20,6 +20,8 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  # Use the service hostname instead of localhost for health checks
+  TAILPASTE_URL: http://tailpaste:8080
 
 jobs:
   health-monitor:

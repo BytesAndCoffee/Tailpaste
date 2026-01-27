@@ -33,7 +33,8 @@ class HealthChecker:
     def _load_config(self, config_path: Optional[str]) -> dict:
         """Load configuration from file or use defaults"""
         default_config = {
-            "service_url": os.getenv("TAILPASTE_URL", "http://localhost:8080"),
+            # Default to the tailpaste service hostname used in CI runners
+            "service_url": os.getenv("TAILPASTE_URL", "http://tailpaste:8080"),
             "storage_path": os.getenv("STORAGE_PATH", "./storage"),
             "max_db_size_mb": 500,
             "response_timeout": 10,
