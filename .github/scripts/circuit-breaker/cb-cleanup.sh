@@ -6,8 +6,13 @@
 
 set -euo pipefail
 
-REPOSITORY=$1
-MONITORING_SESSION_ID=$2
+REPOSITORY=${1:?Repository is required}
+MONITORING_SESSION_ID=${2:-}
+
+if [ -z "$MONITORING_SESSION_ID" ]; then
+	echo "MONITORING_SESSION_ID is empty; skipping variable update" >&2
+	exit 1
+fi
 
 echo "🧹 Cleaning up circuit breaker monitoring session..."
 
