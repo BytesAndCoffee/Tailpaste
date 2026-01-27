@@ -14,9 +14,9 @@ ACTOR=$3
 echo "🔄 Resetting circuit breaker..."
 
 if [ "$RESET_FAILURES" = "true" ]; then
-  python3 scripts/circuit_breaker.py --repo "$REPOSITORY" close
+  python3 scripts/ci/circuit_breaker.py --repo "$REPOSITORY" close
 else
-  python3 scripts/circuit_breaker.py --repo "$REPOSITORY" close --keep-failures
+  python3 scripts/ci/circuit_breaker.py --repo "$REPOSITORY" close --keep-failures
 fi
 
 if [ $? -eq 0 ]; then

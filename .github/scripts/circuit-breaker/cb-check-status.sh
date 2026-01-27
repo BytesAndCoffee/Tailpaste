@@ -10,7 +10,7 @@ REPOSITORY=$1
 echo "🔍 Checking comprehensive circuit breaker status..."
 
 # Use the enhanced circuit breaker script
-python3 scripts/circuit_breaker.py --repo "$REPOSITORY" status --json > /tmp/cb_status.json
+python3 scripts/ci/circuit_breaker.py --repo "$REPOSITORY" status --json > /tmp/cb_status.json
 
 # Parse status
 CB_STATUS=$(python3 -c "import json; data=json.load(open('/tmp/cb_status.json')); print(data['status'])")
