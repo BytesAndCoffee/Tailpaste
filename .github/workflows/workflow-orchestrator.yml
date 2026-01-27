@@ -63,11 +63,12 @@ jobs:
         run: |
           if ! command -v gh &> /dev/null; then
             echo "Installing GitHub CLI..."
-            sudo apt-get update
-            sudo apt-get install -y gh
+            bash .github/scripts/install-gh-cli.sh
           else
             echo "GitHub CLI already installed"
+            gh --version
           fi
+        continue-on-error: true
       
       - name: Set up Python
         uses: actions/setup-python@v5

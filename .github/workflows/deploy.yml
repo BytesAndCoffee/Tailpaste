@@ -115,11 +115,12 @@ jobs:
         run: |
           if ! command -v gh &> /dev/null; then
             echo "Installing GitHub CLI..."
-            sudo apt-get update
-            sudo apt-get install -y gh
+            bash .github/scripts/install-gh-cli.sh
           else
             echo "GitHub CLI already installed"
+            gh --version
           fi
+        continue-on-error: true
 
       - name: Log manual action and validate inputs
         if: github.event_name == 'workflow_dispatch'
@@ -459,9 +460,12 @@ jobs:
         run: |
           if ! command -v gh &> /dev/null; then
             echo "Installing GitHub CLI..."
-            sudo apt-get update
-            sudo apt-get install -y gh
+            bash .github/scripts/install-gh-cli.sh
+          else
+            echo "GitHub CLI already installed"
+            gh --version
           fi
+        continue-on-error: true
 
       - name: Download artifact metadata from Integration Tests workflow
         if: github.event_name == 'workflow_run'
