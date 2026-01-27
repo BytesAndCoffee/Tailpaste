@@ -90,6 +90,7 @@ jobs:
       
       - name: Execute comprehensive health checks
         id: health_checks
+        continue-on-error: true
         run: |
           if [ -z "${{ secrets.GITHUB_TOKEN }}" ]; then
             echo "GITHUB_TOKEN is not set. Exiting."
@@ -99,6 +100,7 @@ jobs:
           .github/scripts/health-check/execute-health-checks.sh
       
       - name: Record health check results
+        continue-on-error: true
         run: |
           if [ -z "${{ secrets.GITHUB_TOKEN }}" ]; then
             echo "GITHUB_TOKEN is not set. Exiting."
@@ -109,6 +111,7 @@ jobs:
       
       - name: Evaluate recovery conditions
         id: recovery_evaluation
+        continue-on-error: true
         run: |
           echo "🔍 Evaluating recovery conditions..."
           if [ -z "${{ secrets.GITHUB_TOKEN }}" ]; then
@@ -116,7 +119,7 @@ jobs:
             exit 1
           fi
           export GH_TOKEN="${{ secrets.GITHUB_TOKEN }}"
-          OVERALL_HEALTH="${{ steps.health_checks.outputs.OVERALL_HEALTH }}"
+          OVERALL_HEALTH="${{ steps.health_checks.outputs.OVERALL_HEALTH || 'unknown' }}"
           FORCE_RECOVERY="${{ inputs.force_recovery }}"
           SKIP_RECOVERY="${{ inputs.skip_recovery }}"
           SHOULD_TRIGGER_RECOVERY=false
@@ -182,6 +185,7 @@ jobs:
       
       - name: Trigger recovery workflow
         if: steps.recovery_evaluation.outputs.SHOULD_TRIGGER_RECOVERY == 'true'
+        continue-on-error: true
         run: |
           echo "🚀 Triggering recovery workflow..."
           if [ -z "${{ secrets.GITHUB_TOKEN }}" ]; then
@@ -189,8 +193,8 @@ jobs:
             exit 1
           fi
           export GH_TOKEN="${{ secrets.GITHUB_TOKEN }}"
-          RECOVERY_REASON="${{ steps.recovery_evaluation.outputs.RECOVERY_REASON }}"
-          OVERALL_HEALTH="${{ steps.health_checks.outputs.OVERALL_HEALTH }}"
+          RECOVERY_REASON="${{ steps.recovery_evaluation.outputs.RECOVERY_REASON || 'unknown' }}"
+          OVERALL_HEALTH="${{ steps.health_checks.outputs.OVERALL_HEALTH || 'unknown' }}"
           # Clear any pending recovery triggers since we now have the workflow
           gh variable delete PENDING_RECOVERY_TRIGGER --repo ${{ github.repository }} 2>/dev/null || true
           gh variable delete PENDING_RECOVERY_REASON --repo ${{ github.repository }} 2>/dev/null || true
@@ -223,10 +227,10 @@ jobs:
             exit 1
           fi
           export GH_TOKEN="${{ secrets.GITHUB_TOKEN }}"
-          OVERALL_HEALTH="${{ steps.health_checks.outputs.OVERALL_HEALTH }}"
-          HEALTH_DETAILS="${{ steps.health_checks.outputs.HEALTH_DETAILS }}"
-          SHOULD_TRIGGER_RECOVERY="${{ steps.recovery_evaluation.outputs.SHOULD_TRIGGER_RECOVERY }}"
-          RECOVERY_REASON="${{ steps.recovery_evaluation.outputs.RECOVERY_REASON }}"
+          OVERALL_HEALTH="${{ steps.health_checks.outputs.OVERALL_HEALTH || 'unknown' }}"
+          HEALTH_DETAILS="${{ steps.health_checks.outputs.HEALTH_DETAILS || 'No details' }}"
+          SHOULD_TRIGGER_RECOVERY="${{ steps.recovery_evaluation.outputs.SHOULD_TRIGGER_RECOVERY || 'false' }}"
+          RECOVERY_REASON="${{ steps.recovery_evaluation.outputs.RECOVERY_REASON || 'unknown' }}"
           # Create comprehensive summary
           echo "## 🏥 Continuous Health Monitoring Report" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
