@@ -241,7 +241,7 @@ jobs:
               --test-type "recovery_attempt" \
               --status "pending" \
               --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-              --details "Starting non-destructive recovery actions for reason: $RECOVERY_REASON"
+              --details "Starting non-destructive recovery actions for reason: $RECOVERY_REASON" || true
           fi
           
           echo "🔄 Recovery Action 1: Container restart (non-destructive)"
@@ -408,7 +408,7 @@ jobs:
               --test-type "recovery_actions" \
               --status "completed" \
               --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-              --details "$RECOVERY_DETAILS"
+              --details "$RECOVERY_DETAILS" || true
           fi
           
           echo "✅ Non-destructive recovery actions completed"
@@ -457,7 +457,7 @@ jobs:
               --test-type "post_recovery_health_check" \
               --status "$POST_RECOVERY_STATUS" \
               --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-              --details "Post-recovery health check: $POST_RECOVERY_DETAILS"
+              --details "Post-recovery health check: $POST_RECOVERY_DETAILS" || true
           fi
           
           # Update system health status
@@ -528,7 +528,7 @@ jobs:
                 --test-type "recovery" \
                 --status "successful" \
                 --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-                --details "Recovery successful: $EVALUATION_REASON"
+                --details "Recovery successful: $EVALUATION_REASON" || true
             fi
           else
             echo "🔄 Recovery evaluation: $EVALUATION_REASON"
@@ -642,7 +642,7 @@ jobs:
             --test-type "redeployment_attempt" \
             --status "pending" \
             --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            --details "Redeployment attempt triggered by recovery workflow: $RECOVERY_REASON"
+            --details "Redeployment attempt triggered by recovery workflow: $RECOVERY_REASON" || true
           
           # Trigger deployment workflow with the candidate artifact
           echo "🔄 Triggering deployment workflow..."
@@ -685,7 +685,7 @@ jobs:
               --test-type "redeployment_attempt" \
               --status "failed" \
               --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-              --details "Failed to trigger deployment workflow"
+              --details "Failed to trigger deployment workflow" || true
           fi
           
           echo "REDEPLOYMENT_TRIGGERED=$REDEPLOYMENT_TRIGGERED" >> $GITHUB_OUTPUT
@@ -716,7 +716,7 @@ jobs:
               --test-type "recovery" \
               --status "failed" \
               --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-              --details "Recovery workflow failed: $RECOVERY_REASON (failure count: $NEW_FAILURE_COUNT)"
+              --details "Recovery workflow failed: $RECOVERY_REASON (failure count: $NEW_FAILURE_COUNT)" || true
           fi
           
           # Check if circuit breaker should be triggered
