@@ -67,4 +67,5 @@ RUN apk add --no-cache \
     net-tools \
     bind-tools \
     tcpdump \
+    curl \
     strace
