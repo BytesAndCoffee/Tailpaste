@@ -320,7 +320,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines, including:
 - Pull request process
 - Areas for contribution
 
-For CI/CD and monitoring setup, see [docs/CI_CD.md](docs/CI_CD.md).
+For CI/CD and monitoring setup, see [docs/CI_CD.md](docs/CI_CD.md)
 
 ## Acknowledgments
 
