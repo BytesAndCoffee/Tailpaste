@@ -1,37 +1,26 @@
 # Requirements for orchestration containers
 # Includes API server, orchestrator, health monitoring, and state management
 
-# Core dependencies
+# Core dependencies (inherited from Tailpaste)
 Flask==3.0.0
 Gunicorn==21.2.0
 requests==2.31.0
-requests-unixsocket==0.3.0  # For Tailscale LocalAPI (inherited from Tailpaste)
+urllib3<2
+requests-unixsocket==0.3.0  # For Tailscale LocalAPI
+pytest==7.4.3
+hypothesis==6.92.1
+tomli==2.0.1; python_version < '3.11'
+types-requests
 
-# State management
+# Additional orchestration dependencies
 SQLAlchemy==2.0.23
-alembic==1.13.0  # Database migrations
-
-# Scheduling
 APScheduler==3.10.4
-
-# Data handling
 python-dateutil==2.8.2
 pytz==2023.3
-
-# Logging
 python-json-logger==2.0.7
-
-# Monitoring
-psutil==5.9.6  # System metrics
-docker==7.0.0  # Docker API for container health
-
-# GitHub integration
+psutil==5.9.6
+docker==7.0.0
 PyGithub==2.1.1
-
-# Utilities
-pydantic==2.5.0  # Data validation
+pydantic==2.5.0
 python-dotenv==1.0.0
 click==8.1.7
-
-# Existing Tailpaste dependencies (for script execution)
--r requirements.txt
