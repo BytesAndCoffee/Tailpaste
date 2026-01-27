@@ -27,6 +27,9 @@ services:
       - tailscale-state:/var/lib/tailscale
       # Optional: Mount custom configuration file (uncomment if needed)
       # - ./config.toml:/app/config.toml:ro
+      # Optional: Mount logs directory (uncomment if needed)
+      - ./logs:/var/log/tailpaste
+
     environment:
       - STORAGE_PATH=/data
       - LISTEN_PORT=8080
@@ -56,11 +59,6 @@ services:
           cpus: '0.5'
           memory: 256M
     
-    # Mount point for accessing logs
-    volumes:
-      - ./storage:/data
-      - tailscale-state:/var/lib/tailscale
-      - ./logs:/var/log/tailpaste
 
 volumes:
   tailscale-state:
