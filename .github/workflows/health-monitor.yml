@@ -27,6 +27,11 @@ jobs:
     runs-on:
       - tailpaste-runners
     
+    # Required permissions for health monitoring
+    permissions:
+      contents: read
+      actions: write      # Required to set repository variables
+    
     # Prevent concurrent health monitoring runs
     concurrency:
       group: health-monitoring
