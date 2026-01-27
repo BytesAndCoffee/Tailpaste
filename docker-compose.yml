@@ -37,6 +37,30 @@ services:
       # Optional: Set custom domain for paste URLs
       - CUSTOM_DOMAIN=${CUSTOM_DOMAIN}
     restart: unless-stopped
+    
+    # Health check to detect crashes and external kills
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health", "||", "exit", "1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    
+    # Resource limits to monitor and prevent OOMKill
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+    
+    # Mount point for accessing logs
+    volumes:
+      - ./storage:/data
+      - tailscale-state:/var/lib/tailscale
+      - ./logs:/var/log/tailpaste
 
 volumes:
   tailscale-state:
