@@ -116,8 +116,13 @@ jobs:
             python scripts/workflows/workflow_status_monitor.py --repo ${{ github.repository }} --json > status_report.json 2>/dev/null || true
             
             # Simple grep-based counting for critical and warning issues
-            CRITICAL_ISSUES=$(grep -c "CRITICAL:" orchestration_report.json 2>/dev/null || echo "0")
-            WARNING_ISSUES=$(grep -c -E "(WARNING:|issues detected|inconsistency)" orchestration_report.json 2>/dev/null || echo "0")
+            # Use grep -c which returns 0 if no matches, and capture only the numeric output
+            CRITICAL_ISSUES=$(grep -c "CRITICAL:" orchestration_report.json 2>/dev/null || printf "0")
+            WARNING_ISSUES=$(grep -c -E "(WARNING:|issues detected|inconsistency)" orchestration_report.json 2>/dev/null || printf "0")
+            
+            # Ensure variables are valid integers
+            CRITICAL_ISSUES=$(printf "%d" "$CRITICAL_ISSUES" 2>/dev/null || printf "0")
+            WARNING_ISSUES=$(printf "%d" "$WARNING_ISSUES" 2>/dev/null || printf "0")
             
             if [ "$CRITICAL_ISSUES" -gt 0 ]; then
               VALIDATION_STATUS="critical"
