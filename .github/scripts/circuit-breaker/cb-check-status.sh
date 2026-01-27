@@ -5,9 +5,11 @@
 
 set -euo pipefail
 
+log() { echo "$@" >&2; }
+
 REPOSITORY=$1
 
-echo "🔍 Checking comprehensive circuit breaker status..."
+log "🔍 Checking comprehensive circuit breaker status..."
 
 # Use the enhanced circuit breaker script
 python3 scripts/ci/circuit_breaker.py --repo "$REPOSITORY" status --json > /tmp/cb_status.json
@@ -19,28 +21,28 @@ DEPLOYMENT_FAILURES=$(python3 -c "import json; data=json.load(open('/tmp/cb_stat
 RECOVERY_THRESHOLD=$(python3 -c "import json; data=json.load(open('/tmp/cb_status.json')); print(data['recovery_threshold'])")
 DEPLOYMENT_THRESHOLD=$(python3 -c "import json; data=json.load(open('/tmp/cb_status.json')); print(data['deployment_threshold'])")
 
-echo "Circuit Breaker Status: $CB_STATUS"
-echo "Recovery Failures: $RECOVERY_FAILURES / $RECOVERY_THRESHOLD"
-echo "Deployment Failures: $DEPLOYMENT_FAILURES / $DEPLOYMENT_THRESHOLD"
+log "Circuit Breaker Status: $CB_STATUS"
+log "Recovery Failures: $RECOVERY_FAILURES / $RECOVERY_THRESHOLD"
+log "Deployment Failures: $DEPLOYMENT_FAILURES / $DEPLOYMENT_THRESHOLD"
 
-# Output for GitHub Actions
-echo "CB_STATUS=$CB_STATUS"
-echo "RECOVERY_FAILURES=$RECOVERY_FAILURES"
-echo "DEPLOYMENT_FAILURES=$DEPLOYMENT_FAILURES"
-echo "RECOVERY_THRESHOLD=$RECOVERY_THRESHOLD"
-echo "DEPLOYMENT_THRESHOLD=$DEPLOYMENT_THRESHOLD"
+# Output for GitHub Actions (stdout only)
+printf 'CB_STATUS=%s\n' "$CB_STATUS"
+printf 'RECOVERY_FAILURES=%s\n' "$RECOVERY_FAILURES"
+printf 'DEPLOYMENT_FAILURES=%s\n' "$DEPLOYMENT_FAILURES"
+printf 'RECOVERY_THRESHOLD=%s\n' "$RECOVERY_THRESHOLD"
+printf 'DEPLOYMENT_THRESHOLD=%s\n' "$DEPLOYMENT_THRESHOLD"
 
 # Check if thresholds are exceeded
 RECOVERY_EXCEEDED=$([[ $RECOVERY_FAILURES -ge $RECOVERY_THRESHOLD ]] && echo "true" || echo "false")
 DEPLOYMENT_EXCEEDED=$([[ $DEPLOYMENT_FAILURES -ge $DEPLOYMENT_THRESHOLD ]] && echo "true" || echo "false")
 
-echo "RECOVERY_EXCEEDED=$RECOVERY_EXCEEDED"
-echo "DEPLOYMENT_EXCEEDED=$DEPLOYMENT_EXCEEDED"
+printf 'RECOVERY_EXCEEDED=%s\n' "$RECOVERY_EXCEEDED"
+printf 'DEPLOYMENT_EXCEEDED=%s\n' "$DEPLOYMENT_EXCEEDED"
 
 if [ "$CB_STATUS" = "open" ]; then
-  echo "🚫 Circuit breaker is currently OPEN"
+  log "🚫 Circuit breaker is currently OPEN"
 elif [ "$RECOVERY_EXCEEDED" = "true" ] || [ "$DEPLOYMENT_EXCEEDED" = "true" ]; then
-  echo "⚠️  Thresholds exceeded but circuit breaker is still closed"
+  log "⚠️  Thresholds exceeded but circuit breaker is still closed"
 else
-  echo "✅ Circuit breaker is healthy"
+  log "✅ Circuit breaker is healthy"
 fi
