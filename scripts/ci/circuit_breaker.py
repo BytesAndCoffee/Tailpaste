@@ -53,9 +53,11 @@ class CircuitBreakerManager:
 
     def set_variable(self, name: str, value: str) -> bool:
         """Set a GitHub repository variable"""
-        success, _ = self._run_gh_command(
+        success, output = self._run_gh_command(
             ["variable", "set", name, "--body", value, "--repo", self.repo]
         )
+        if not success:
+            print(f"❌ Failed to set variable {name}: {output}")
         return success
 
     def get_circuit_breaker_status(self) -> Dict[str, str]:
