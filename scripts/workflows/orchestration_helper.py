@@ -20,8 +20,15 @@ def get_unhealthy_workflows():
                 unhealthy.append(workflow)
 
         print(",".join(unhealthy))
-    except:
-        print("")
+    except FileNotFoundError:
+        print("", file=sys.stderr)
+        sys.stderr.write("Warning: orchestration_report.json not found\n")
+    except json.JSONDecodeError as e:
+        print("", file=sys.stderr)
+        sys.stderr.write(f"Error: Invalid JSON in orchestration_report.json: {e}\n")
+    except Exception as e:
+        print("", file=sys.stderr)
+        sys.stderr.write(f"Error getting unhealthy workflows: {e}\n")
 
 
 def calculate_stuck_duration(timestamp_str):
@@ -30,7 +37,11 @@ def calculate_stuck_duration(timestamp_str):
         start_time = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
         duration = (datetime.now(timezone.utc) - start_time).total_seconds()
         print(int(duration))
-    except:
+    except ValueError as e:
+        sys.stderr.write(f"Error: Invalid timestamp format '{timestamp_str}': {e}\n")
+        print(0)
+    except Exception as e:
+        sys.stderr.write(f"Error calculating stuck duration: {e}\n")
         print(0)
 
 
@@ -45,8 +56,12 @@ def get_critical_recommendations():
         ]
         for rec in critical_recs:
             print(f"- {rec}")
-    except:
-        pass
+    except FileNotFoundError:
+        sys.stderr.write("Warning: orchestration_report.json not found\n")
+    except json.JSONDecodeError as e:
+        sys.stderr.write(f"Error: Invalid JSON in orchestration_report.json: {e}\n")
+    except Exception as e:
+        sys.stderr.write(f"Error getting critical recommendations: {e}\n")
 
 
 def generate_workflow_health_summary():
@@ -67,8 +82,12 @@ def generate_workflow_health_summary():
             }.get(health, "❓")
 
             print(f"- **{workflow}**: {health_emoji} {health.upper()} (last: {status})")
-    except:
-        pass
+    except FileNotFoundError:
+        sys.stderr.write("Warning: orchestration_report.json not found\n")
+    except json.JSONDecodeError as e:
+        sys.stderr.write(f"Error: Invalid JSON in orchestration_report.json: {e}\n")
+    except Exception as e:
+        sys.stderr.write(f"Error generating workflow health summary: {e}\n")
 
 
 def generate_consistency_summary():
@@ -93,8 +112,12 @@ def generate_consistency_summary():
                     if issues:
                         for issue in issues[:3]:  # Show first 3 issues
                             print(f"  - {issue}")
-    except:
-        pass
+    except FileNotFoundError:
+        sys.stderr.write("Warning: orchestration_report.json not found\n")
+    except json.JSONDecodeError as e:
+        sys.stderr.write(f"Error: Invalid JSON in orchestration_report.json: {e}\n")
+    except Exception as e:
+        sys.stderr.write(f"Error generating consistency summary: {e}\n")
 
 
 def generate_recommendations_summary():
@@ -113,8 +136,12 @@ def generate_recommendations_summary():
                 print(f"{i}. ⚠️ {rec}")
             else:
                 print(f"{i}. ℹ️ {rec}")
-    except:
-        pass
+    except FileNotFoundError:
+        sys.stderr.write("Warning: orchestration_report.json not found\n")
+    except json.JSONDecodeError as e:
+        sys.stderr.write(f"Error: Invalid JSON in orchestration_report.json: {e}\n")
+    except Exception as e:
+        sys.stderr.write(f"Error generating recommendations summary: {e}\n")
 
 
 def sync_state():
