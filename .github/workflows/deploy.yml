@@ -111,6 +111,9 @@ jobs:
       cancel-in-progress: false
     
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Install GitHub CLI
         run: |
           if ! command -v gh &> /dev/null; then
@@ -438,10 +441,6 @@ jobs:
           echo "Workflow run: ${{ github.run_id }}"
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-        if: ${{ !inputs.rollback }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
