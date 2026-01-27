@@ -191,10 +191,10 @@ class CircuitBreakerManager:
                 [
                     ("RECOVERY_FAILURE_COUNT", "0"),
                     ("DEPLOYMENT_FAILURE_COUNT", "0"),
-                    ("LAST_RECOVERY_FAILURE_TIME", ""),
-                    ("LAST_RECOVERY_FAILURE_REASON", ""),
-                    ("LAST_DEPLOYMENT_FAILURE_TIME", ""),
-                    ("LAST_DEPLOYMENT_FAILURE_REASON", ""),
+                    ("LAST_RECOVERY_FAILURE_TIME", self.clear_placeholder),
+                    ("LAST_RECOVERY_FAILURE_REASON", self.clear_placeholder),
+                    ("LAST_DEPLOYMENT_FAILURE_TIME", self.clear_placeholder),
+                    ("LAST_DEPLOYMENT_FAILURE_REASON", self.clear_placeholder),
                 ]
             )
 
