@@ -288,34 +288,28 @@ jobs:
               fi
             else
               echo "⚠️  Container in unexpected state: $CONTAINER_STATUS"
-              echo "Attempting to recreate container with same image..."
+              echo "Attempting to recreate container using docker-compose..."
               
-              # Get current image
-              CURRENT_IMAGE=$(docker inspect --format='{{.Config.Image}}' tailpaste 2>/dev/null || echo "")
+              # Clean up any existing container (if it exists in a bad state)
+              docker stop tailpaste 2>/dev/null || true
+              docker rm tailpaste 2>/dev/null || true
               
-              if [ -n "$CURRENT_IMAGE" ]; then
-                echo "Current image: $CURRENT_IMAGE"
-                
-                # Stop and remove container, then recreate with same image
-                docker stop tailpaste 2>/dev/null || true
-                docker rm tailpaste 2>/dev/null || true
-                
-                # Recreate using docker-compose (preserves configuration)
-                docker compose -f docker-compose.yml up -d
-                
-                echo "⏳ Waiting for recreated container..."
-                sleep 15
-                
-                NEW_STATUS=$(docker inspect --format='{{.State.Status}}' tailpaste 2>/dev/null || echo "not_found")
-                if [ "$NEW_STATUS" = "running" ]; then
-                  echo "✅ Container recreation successful"
-                  exit 0
-                else
-                  echo "❌ Container recreation failed - status: $NEW_STATUS"
-                  exit 1
-                fi
+              # Recreate using docker-compose (uses image from docker-compose.yml)
+              # This works whether the container existed or not, and preserves configuration
+              docker compose -f docker-compose.yml up -d
+              
+              echo "⏳ Waiting for recreated container..."
+              sleep 15
+              
+              NEW_STATUS=$(docker inspect --format='{{.State.Status}}' tailpaste 2>/dev/null || echo "not_found")
+              if [ "$NEW_STATUS" = "running" ]; then
+                echo "✅ Container recreation successful"
+                exit 0
               else
-                echo "❌ Could not determine current image"
+                echo "❌ Container recreation failed - status: $NEW_STATUS"
+                # Show logs to help diagnose the issue
+                echo "Container logs:"
+                docker logs tailpaste 2>&1 | tail -n 50 || true
                 exit 1
               fi
             fi
