@@ -75,8 +75,7 @@ permissions:
 jobs:
   recovery:
     name: Recovery and Redeployment Logic
-    runs-on:
-      - tailpaste-runners
+    runs-on: ubuntu-24.04
     
     # Required permissions for recovery workflow
     permissions:

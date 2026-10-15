@@ -34,8 +34,7 @@ permissions:
 jobs:
   circuit-breaker-monitor:
     name: Circuit Breaker Monitoring and Management
-    runs-on:
-      - tailpaste-runners
+    runs-on: ubuntu-24.04
     
     # Required permissions for circuit breaker workflow
     permissions:

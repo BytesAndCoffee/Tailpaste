@@ -26,8 +26,7 @@ env:
 jobs:
   health-monitor:
     name: Continuous Health Monitoring
-    runs-on:
-      - tailpaste-runners
+    runs-on: ubuntu-24.04
     
     # Required permissions for health monitoring
     permissions:

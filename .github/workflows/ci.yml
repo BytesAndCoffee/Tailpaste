@@ -21,8 +21,7 @@ env:
 jobs:
   lint-and-test:
     name: Lint and Test (Python ${{ matrix.python-version }})
-    runs-on:
-      - tailpaste-runners
+    runs-on: ubuntu-24.04
     
     strategy:
       fail-fast: false
@@ -117,8 +116,7 @@ jobs:
 
   build-artifact:
     name: Build and Push Docker Artifact
-    runs-on:
-      - tailpaste-runners
+    runs-on: ubuntu-24.04
     needs: lint-and-test
     if: github.ref == 'refs/heads/main' && github.event_name == 'push' && needs.lint-and-test.result == 'success'
     permissions:

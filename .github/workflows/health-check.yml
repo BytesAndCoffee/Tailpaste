@@ -10,8 +10,7 @@ on:
 jobs:
   health-check:
     name: Service Health Check
-    runs-on:
-      - tailpaste-runners
+    runs-on: ubuntu-24.04
     
     permissions:
       contents: read
