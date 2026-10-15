@@ -42,8 +42,7 @@ env:
 jobs:
   workflow-orchestration:
     name: Workflow Orchestration and Coordination
-    runs-on:
-      - tailpaste-runners
+    runs-on: ubuntu-24.04
     
     # Required permissions for orchestration workflow
     permissions:

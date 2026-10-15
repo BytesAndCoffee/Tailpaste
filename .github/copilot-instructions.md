@@ -110,7 +110,7 @@ GitHub Actions in `.github/workflows/` (documented in [`docs/CI_CD.md`](docs/CI_
 4. **Deploy** (on integration success) - Production deployment with rollback
 5. **Health Check** (hourly) - Auto-recovery on failures
 
-**Self-hosted runners** via ARC on Kubernetes - workflows may reference runner labels.
+**GitHub-hosted runners** (`ubuntu-24.04`); jobs needing the docker host join the tailnet via `tailscale/github-action` (`tag:ci`).
 
 ## Key Integration Points
 

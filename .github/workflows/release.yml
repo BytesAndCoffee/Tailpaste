@@ -14,8 +14,7 @@ on:
 jobs:
   validate-release:
     name: Validate Release
-    runs-on:
-      - tailpaste-runners
+    runs-on: ubuntu-24.04
     
     outputs:
       version: ${{ steps.get-version.outputs.version }}
@@ -62,8 +61,7 @@ jobs:
   security-scan:
     name: Security Scan for Release
     needs: validate-release
-    runs-on:
-      - tailpaste-runners
+    runs-on: ubuntu-24.04
     
     steps:
       - name: Checkout code
@@ -88,8 +86,7 @@ jobs:
   build-and-test:
     name: Build and Test Release
     needs: [validate-release, security-scan]  # Wait for both validation and security scan
-    runs-on:
-      - tailpaste-runners
+    runs-on: ubuntu-24.04
     
     steps:
       - name: Checkout code
@@ -158,8 +155,7 @@ jobs:
   create-release-artifacts:
     name: Create Release Artifacts
     needs: [validate-release, build-and-test]
-    runs-on:
-      - tailpaste-runners
+    runs-on: ubuntu-24.04
     
     steps:
       - name: Checkout code
@@ -288,8 +284,7 @@ jobs:
   publish-release:
     name: Publish GitHub Release
     needs: [validate-release, create-release-artifacts]
-    runs-on:
-      - tailpaste-runners
+    runs-on: ubuntu-24.04
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     
     permissions:

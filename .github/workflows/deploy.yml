@@ -96,8 +96,7 @@ jobs:
       ) || 
       (github.event_name == 'workflow_dispatch' && inputs.rollback == true) ||
       github.event_name == 'workflow_dispatch'
-    runs-on:
-      - tailpaste-runners
+    runs-on: ubuntu-24.04
     
     # Required permissions for deployment workflow
     permissions:

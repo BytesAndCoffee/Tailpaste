@@ -1,47 +1,12 @@
 # CI/CD Workflows
 
-Automated CI/CD pipeline for Tailpaste using GitHub Actions with self-hosted runners (GitHub ARC on Kubernetes).
+Automated CI/CD pipeline for Tailpaste using GitHub Actions on GitHub-hosted runners (`ubuntu-24.04`).
 
 ## Architecture
 
-**Runners**: GitHub Actions Runner Controller (ARC) running in Kubernetes on `plex` host
+**Runners**: GitHub-hosted `ubuntu-24.04`; jobs that touch the docker host join the tailnet with `tailscale/github-action`
 **Target**: Docker host running the tailpaste container
 **Network**: Tailscale for secure connectivity
-
-### Runner Requirements
-
-The ARC runner pods must be configured with:
-- `privileged: true` OR
-- Capabilities: `NET_ADMIN`, `NET_RAW`, `SYS_MODULE`
-- Access to `/dev/net/tun`
-
-This is required for Tailscale kernel networking mode.
-
-**Important:** ARC runners always include the `self-hosted` label. Workflows must explicitly request both `self-hosted` AND the custom label:
-
-```yaml
-runs-on:
-  - self-hosted
-  - tailpaste-runners
-```
-
-**Example ARC runner configuration:**
-```yaml
-spec:
-  template:
-    spec:
-      containers:
-      - name: runner
-        securityContext:
-          privileged: true
-        # OR use specific capabilities:
-        # securityContext:
-        #   capabilities:
-        #     add:
-        #     - NET_ADMIN
-        #     - NET_RAW
-        #     - SYS_MODULE
-```
 
 ## Workflow Dependencies & Execution Order
 
@@ -132,10 +97,8 @@ Tag → [Validate] → [Security + Build] → [Create Artifacts] → [Publish]
 
 ### Prerequisites
 
-1. **GitHub ARC Runners**
-   - Installed in Kubernetes on `plex` host
-   - Label: `tailpaste-runners`
-   - Has access to Docker daemon
+1. **GitHub-hosted runners**
+   - Jobs run on `ubuntu-24.04` (Docker and sudo available out of the box)
 
 2. **Tailscale Configuration**
    - OAuth client created with `devices:write` scope
@@ -208,33 +171,6 @@ All workflows support manual triggering:
 5. Click "Run workflow"
 
 ### Troubleshooting
-
-### Tailscale Connection Failures
-
-**Error: "sudo failed with exit code 1" or "runner is not in the sudoers file"**
-
-The runner pod needs elevated privileges to run Tailscale in kernel networking mode.
-
-**Solution**: Update your ARC runner configuration to run as privileged:
-
-```bash
-# Edit your ARC runner scale set
-kubectl edit runnerscaleset tailpaste-runners -n actions-runner-system
-
-# Add under spec.template.spec.containers[0]:
-securityContext:
-  privileged: true
-```
-
-Or use specific capabilities if you don't want full privileged mode:
-```yaml
-securityContext:
-  capabilities:
-    add:
-    - NET_ADMIN
-    - NET_RAW
-    - SYS_MODULE
-```
 
 ### CI Failures
 

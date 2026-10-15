@@ -14,8 +14,7 @@ jobs:
   # These jobs run in parallel as they are independent
   dependency-scan:
     name: Dependency Vulnerability Scan
-    runs-on:
-      - tailpaste-runners
+    runs-on: ubuntu-24.04
     
     steps:
       - name: Checkout code
@@ -78,8 +77,7 @@ jobs:
 
   code-security-scan:
     name: Code Security Analysis
-    runs-on:
-      - tailpaste-runners
+    runs-on: ubuntu-24.04
     
     steps:
       - name: Checkout code
@@ -117,8 +115,7 @@ jobs:
 
   docker-security-scan:
     name: Docker Image Security Scan
-    runs-on:
-      - tailpaste-runners
+    runs-on: ubuntu-24.04
     if: github.event_name == 'push' || github.event_name == 'schedule'
     
     # IMPORTANT: This job uses labeled Docker resources to prevent production conflicts
@@ -199,8 +196,7 @@ jobs:
 
   dependency-update-check:
     name: Check for Dependency Updates
-    runs-on:
-      - tailpaste-runners
+    runs-on: ubuntu-24.04
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     
     steps:

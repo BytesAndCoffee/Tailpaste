@@ -54,8 +54,7 @@ permissions:
 jobs:
   manual-rollback:
     name: Execute Manual Rollback
-    runs-on:
-      - tailpaste-runners
+    runs-on: ubuntu-24.04
     
     # Required permissions for rollback workflow
     permissions:
