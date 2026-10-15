@@ -718,8 +718,7 @@ jobs:
             echo "$CURRENT_HASH" > ~/.tailpaste-backups/${BACKUP_NAME}-commit
             
             # Save current image
-            docker save tailpaste-app:production -o ~/.tailpaste-backups/${BACKUP_NAME}-image.tar 2>/dev/null || \
-            docker save tailpaste-tailpaste:latest -o ~/.tailpaste-backups/${BACKUP_NAME}-image.tar 2>/dev/null || true
+            docker save tailpaste-app:production -o ~/.tailpaste-backups/${BACKUP_NAME}-image.tar 2>/dev/null || true
             
             # Keep only last 5 backups
             cd ~/.tailpaste-backups
@@ -825,8 +824,8 @@ jobs:
               FULL_IMAGE_LOWER="\${FULL_IMAGE,,}"
               docker pull "\$FULL_IMAGE_LOWER"
               
-              # Tag the pulled image for docker-compose
-              docker tag "\$FULL_IMAGE_LOWER" tailpaste-tailpaste:latest
+              # Tag the pulled image as the one docker-compose.yml runs
+              docker tag "\$FULL_IMAGE_LOWER" tailpaste-app:production
               
               echo "🛑 Stopping current container..."
               docker compose -f docker-compose.yml down
@@ -1162,8 +1161,8 @@ jobs:
             FULL_IMAGE_LOWER="\${FULL_IMAGE,,}"
             docker pull "\$FULL_IMAGE_LOWER"
             
-            # Tag the pulled image for docker-compose
-            docker tag "\$FULL_IMAGE_LOWER" tailpaste-tailpaste:latest
+            # Tag the pulled image as the one docker-compose.yml runs
+            docker tag "\$FULL_IMAGE_LOWER" tailpaste-app:production
             
             echo "🛑 Stopping existing container (production)..."
             docker compose -f docker-compose.yml down
