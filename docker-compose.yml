@@ -1,4 +1,7 @@
 # docker-compose.yml
+# Pin the project name so production never depends on the checkout's directory name
+name: tailpaste
+
 services:
   tailpaste:
     build:

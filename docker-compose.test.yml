@@ -1,4 +1,9 @@
 # docker-compose.test.yml
+# Separate project from production ("tailpaste"): CI runs this file against the
+# docker host's daemon, and sharing a project name made `compose down` here
+# remove the production container and reuse its tailscale-state volume.
+name: tailpaste-testing
+
 services:
   tailpaste:
     build:
